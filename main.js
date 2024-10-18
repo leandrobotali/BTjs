@@ -3,8 +3,8 @@ const {log, sleep} = require("ejtraderiq/utils")
 const config = require('./config.js')
 
 const inversionInicial = config.inversion
-const candleSize = config.candleSize // MH1 = 60, MH5 = 300
-const cantidadCandles = config.cantCandles
+const candleSize = parseInt(config.candleSize) // MH1 = 60, MH5 = 300
+const cantidadCandles = parseInt(config.cantCandles)
 const type = "DIGITAL" // BINARY OR DIGITAL
 const accountType = "PRACTICE" // REAL OR PRACTICE
 const active = "EURUSD"
@@ -87,7 +87,7 @@ async function operar(API,candle){
 	console.log('Segundos de la vela: ',(60 - (candle.to - (Date.now()/1000))));
 	opering = true
 	if(candle.open == candle.close){
-		console.log('No se opera ya que la vela actualmente es un dogi');
+		// console.log('No se opera ya que la vela actualmente es un dogi');
 		opering = false
 		return
 	} else {
@@ -96,7 +96,7 @@ async function operar(API,candle){
 			sor = sop_res.find(sr => sr.value == candle.close && sr.valid >= 3)
 
 		if(sor){
-			console.log('Se encontro soporte o resistencia valido, se procede con la operación');
+			console.log('Se encontro soporte o resistencia valido: ', sor);
 			try {
 				const direction = candle.open < candle.close ? 'PUT' : 'CALL'
 				const order = await API.trade({
@@ -121,7 +121,7 @@ async function operar(API,candle){
 			return
 			}
 		}else{
-			console.log('no se encontro Soporte o Resistencia valido, por lo que no se opera aún');
+			// console.log('no se encontro Soporte o Resistencia valido, por lo que no se opera aún');
 			opering = false
 			return
 		}
@@ -144,5 +144,5 @@ IQOption({
 	})
 
 }).catch(error => {
-	log(error.message)
+	console.log('ERROR ', error)
 })
