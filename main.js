@@ -197,7 +197,7 @@ async function operar(API,candle){
 	// Identificar soporte o resistencia válido
 	const sor = ((candle.open < candle.close && candle.max == candle.close) ||
 				(candle.open > candle.close && candle.min == candle.close)) 
-				? sop_res.find(sr => sr.value == candle.close && sr.valid >= 1) 
+				? sop_res.find(sr => sr.value == candle.close && sr.valid >= 3) 
 				: undefined;
 
 	if (!sor) {
@@ -283,8 +283,9 @@ IQOption({
 					opering = true
 					await operar(API,candle)
 				} catch (err) {
-					suscribe = false
 					console.log('ERROR ', err);
+					if(err == '(trade) rejected by risks')
+						suscribe = false
 				} finally {
 					opering = false
 				}
