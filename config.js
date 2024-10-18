@@ -6,5 +6,9 @@ module.exports = {
 
 	inversion: process.env.INVERSION,
 	candleSize: process.env.CANDSIZE,
-	cantCandles: process.env.CANTCANDLES
+	cantCandles: process.env.CANTCANDLES,
+	optionType: process.env.OPTIONTYPE,
+	accountType: process.env.ACCOUNTTYPE,
+	activePrincipal: process.env.ACTIVEPRINCIPAL,
+	activeSecondary: process.env.ACTIVESECONDARY,
 }
