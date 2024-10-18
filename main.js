@@ -3,8 +3,8 @@ const {log, sleep} = require("ejtraderiq/utils")
 const config = require('./config.js')
 
 const inversionInicial = config.inversion
-const candleSize = 60 // MH1 = 60, MH5 = 300
-const cantidadCandles = 300
+const candleSize = config.candleSize // MH1 = 60, MH5 = 300
+const cantidadCandles = config.cantCandles
 const type = "DIGITAL" // BINARY OR DIGITAL
 const accountType = "PRACTICE" // REAL OR PRACTICE
 const active = "EURUSD"
@@ -130,7 +130,7 @@ async function operar(API,candle){
 
 IQOption({
 	email: config.username,
-	password:config.passwd,
+	password: config.passwd,
 }).then(async API => {
 	API.accountType(accountType) // REAL OR PRACTICE
 
