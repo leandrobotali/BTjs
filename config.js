@@ -1,8 +1,7 @@
 require('dotenv').config();
 
-console.log('ENV: ', process.env)
 module.exports = {
-	username: process.env.USERNAME,
+	username: process.env.USERIQ,
 	passwd: process.env.PASSWD,
 
 	inversion: process.env.INVERSION,
