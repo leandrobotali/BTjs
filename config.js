@@ -11,4 +11,21 @@ module.exports = {
 	accountType: process.env.ACCOUNTTYPE,
 	activePrincipal: process.env.ACTIVEPRINCIPAL,
 	activeSecondary: process.env.ACTIVESECONDARY,
+	duracion_op: process.env.DURACION_OP,
+
+	WEBSOCKET: {
+		GATEWAY: {
+			protocol: "wss",
+			host: "iqoption.com",
+			port: 443,
+			path: "echo/websocket"
+		}
+	},
+	API: {
+		URL: {
+			default: "iqoption.com",
+			auth: "auth.iqoption.com",
+			billing: "billing.iqoption.com"
+		}
+	}
 }
