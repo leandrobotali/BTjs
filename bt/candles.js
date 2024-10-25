@@ -98,7 +98,7 @@ async function callback (candle,API,active) {
 
 			if(!opering){
 				opering = true
-				await es.ejecutarEstrategia(API,active)
+				await es.ejecutarEstrategia(API,active,candle)
 				opering = false
 			}
 		}else

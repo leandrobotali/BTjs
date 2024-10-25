@@ -103,12 +103,12 @@ module.exports = {
 		}
 	},
 
-	ejecutarEstrategia: async (API, active) => {
+	ejecutarEstrategia: async (API, active,candle) => {
 		try {
 			let direction
-			if(rsi >= 75 && tendencia1min == 'BAJISTA' && tendencia5seg == 'BAJISTA')
+			if(rsi >= 75 && tendencia1min == 'BAJISTA' && tendencia5seg == 'BAJISTA' && candle.close >= mediaMovil5seg40)
 				direction = 'PUT'
-			else if(rsi <= 25 && tendencia1min == 'ALCISTA' && tendencia5seg == 'ALCISTA')
+			else if(rsi <= 25 && tendencia1min == 'ALCISTA' && tendencia5seg == 'ALCISTA' && candle.close <= mediaMovil5seg40)
 				direction = 'CALL'
 
 			if(direction){
@@ -120,6 +120,7 @@ module.exports = {
 				console.log('tendencia 1 min: ', tendencia1min);
 				console.log('tendencia 5 seg: ', tendencia5seg);
 				console.log('rsi: ', rsi);
+				console.log('precio de vela: ', candle.close);
 				
 				const order = await API.trade({
 					active,
