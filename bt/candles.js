@@ -10,6 +10,7 @@ let lastCandle
 let initOpHr = false
 let initBlDiario = false
 let opering = false
+let count = 0
 
 let check = false //para chequear el activo al inicio de la vela
 
@@ -36,10 +37,10 @@ async function actualizarCandles(API,activ){
 			currentCandles.shift()
 
 			// console.log('SE INGRESO UNA NUEVA VELA', ncl);
+			es.actualizarIndicadores(currentCandles)
 		}
 	})
 	/* actualizamos los indicadores con las velas actuales */
-	es.actualizarIndicadores(currentCandles)
 }
 
 async function loadCandles(API,activ) {
@@ -60,6 +61,9 @@ async function loadCandles(API,activ) {
 
 async function callback (candle,API,active) {
 	try {
+		count ++
+		console.log('COUNT: ' + count);
+		
 		let checkAct = active
 		const ahora = new Date();
 		const seconds = ahora.getSeconds()
@@ -71,7 +75,7 @@ async function callback (candle,API,active) {
 			check = false
 		/* el activo se chequea una vez al inicio de la vela. Si es igual
 		al activo ingresado por parametro, sigue. Si no es, se inicializa el bot con el nuevo activo */
-		if(active == checkAct){
+		if(active == checkAct && count < 30){
 			const horas = ahora.getHours();  // Obtiene la hora actual (0-23)
 			const minutos = ahora.getMinutes();  // Obtiene los minutos actuales (0-59)
 
@@ -101,8 +105,15 @@ async function callback (candle,API,active) {
 				await es.ejecutarEstrategia(API,active,candle)
 				opering = false
 			}
-		}else
+		}else{
+			opering = false
+			if(count >= 20){
+				console.log('cambiamos de activo');
+				
+				await API.endCandleGenerate(active)
+			}
 			await module.exports.initCandles(API,checkAct)
+		}
 	} catch (err) {
 		initOpHr = false
 		initBlDiario = false
@@ -117,7 +128,8 @@ module.exports = {
 			/* Cargamos en memoria las velas ya formadas */
 			await loadCandles(API,active)
 			/* Nos suscribimos a la generacion en tiempo real de las velas */
-			API.onCandleGenerate(active, async (candle) =>{
+			API.onCandleGenerate(active, parseInt(config.candleSize), async (candle) =>{
+				await utils.sleep(1000);
 				await callback(candle,API,active)
 			})
 		} catch (err) {

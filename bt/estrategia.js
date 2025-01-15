@@ -111,7 +111,8 @@ module.exports = {
 			else if(rsi <= 25 && tendencia1min == 'ALCISTA' && tendencia5seg == 'ALCISTA' && candle.close <= mediaMovil5seg40)
 				direction = 'CALL'
 
-			if(direction){
+			if(direction != undefined){
+				console.log('se opera: ', new Date());
 				console.log('SE EFECTUA LA OPERACION CON LOS SIGUIENTES VALOS DE LOS INDICADORES:')
 				console.log('MM 1 min 80: ', mediaMovil1Min80);
 				console.log('MM 1 min 40: ', mediaMovil1Min40);

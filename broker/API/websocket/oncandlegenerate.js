@@ -1,4 +1,4 @@
-module.exports = function(active, callback) {
+module.exports = function(active, size, callback) {
 	return new Promise((resolve, reject) => {
 		if (!(active in this.actives))
 			return reject("Ativo inválido.")
@@ -10,14 +10,14 @@ module.exports = function(active, callback) {
 			params: {
 				routingFilters: {
 					active_id: activeId,
-					size: 60
+					size
 				}
 			}
 		})
 
-		this.WebSocket.getMessage("candle-generated", message => {
+		this.WebSocket.getMessage("candle-generated", async message => {
 			if (message.msg.active_id == activeId) {
-				callback(message.msg)
+				await callback(message.msg)
 			}
 		})
 	})
