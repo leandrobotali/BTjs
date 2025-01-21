@@ -1,13 +1,13 @@
 module.exports = function(active, size, count, to) {
 	return new Promise((resolve, reject) => {
-		if (!(active in this.actives))
-			return reject("Ativo inválido.")
+		if ((!active.name in this.actives))
+			return reject("getCandles Activo inválido.")
 
 		const id = this.WebSocket.send("sendMessage", {
 			name: "get-candles",
 			version: "2.0",
 			body: {
-				active_id: this.actives[active],
+				active_id: this.actives[active.name],
 				size,
 				to,
 				count

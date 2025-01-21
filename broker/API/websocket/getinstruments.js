@@ -1,21 +1,23 @@
-module.exports = function(option) {
+module.exports = function(option,active) {
 	return new Promise((resolve, reject) => {
-		// Enviar un mensaje para obtener los activos abiertos
+		// Enviar un mensaje para obtener los instrumentos
 		const id = this.WebSocket.send("sendMessage", {
-			name: "get-top-assets",
+			name: "digital-option-instruments.get-instruments",
 			version: "3.0",
 			body: {
-				instrument_type: option,  // Aquí podrías ajustar el tipo de activo que necesitas
-				region_id: -1  // Esto depende de los parámetros que acepte tu API
+				instrument_type: option,
+				asset_id: active.id
 			}
 		})
+        // {"name":"sendMessage","request_id":"87","local_time":13914,
+        //     "msg":{"name":"digital-option-instruments.get-instruments","version":"3.0","body":{"instrument_type":"digital-option","asset_id":76}}}
 
 		// Callback que manejará la respuesta
 		const callback = (message) => {
 			// Comprobar si el request_id coincide con el que hemos enviado
 			if (message.request_id == id) {
 				// Remover el listener para evitar recibir respuestas múltiples para este request
-				this.WebSocket.emitter.removeListener("top-assets", callback);
+				this.WebSocket.emitter.removeListener("instruments", callback);
 				
 				// Devolver la respuesta completa con todos los activos abiertos
 				return resolve(message.msg);
@@ -23,6 +25,6 @@ module.exports = function(option) {
 		}
 
 		// Registrar el listener para el evento "top-assets"
-		this.WebSocket.getMessage("top-assets", callback);
+		this.WebSocket.getMessage("instruments", callback);
 	});
 }

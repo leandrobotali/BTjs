@@ -37,8 +37,9 @@ module.exports = {
 				operaciones_ganadas: 0,
 				operaciones_perdidas: 0,
 				win_rate: 0,
+				max_op_perdidas: 0,
 				dinero_inicial: balance.amount,
-				dinero_actual: balance.amount,
+				dinero_actual: balance.amount
 			}
 		} catch (err) {
 			throw err

@@ -4,6 +4,8 @@ module.exports = function() {
 	return new Promise((resolve, reject) => {
 		const {
 			active,
+			active_id,
+			instrument_index,
 			amount,
 			action,
 			duration
@@ -16,21 +18,28 @@ module.exports = function() {
 		const day = expiration.getDate().toString().padStart(2, "0")
 		const hours = expiration.getHours().toString().padStart(2, "0")
 		const minutes = expiration.getMinutes().toString().padStart(2, "0")
+		const seconds = expiration.getSeconds().toString().padStart(2, "0")
 
-		const formatedDate = year + month + day + hours + minutes
+		const formatedDate = year + month + day
+		const formateTime = hours + minutes + seconds
 
-		const instrumentId = "do" + active + formatedDate + "PT" + duration + "M" + action[0] + "SPT"
+		const instrumentId = "do" + active_id + "A" + formatedDate + "D" + formateTime + "T" + duration + "M" + action[0] + "SPT"
 
 		const id = this.API.WebSocket.send("sendMessage", {
 			name: "digital-options.place-digital-option",
-			version: "1.0",
+			version: "3.0",
 			body: {
 				user_balance_id: this.API.balance.id,
 				instrument_id: instrumentId,
-				amount
+				amount,
+				instrument_index,
+				asset_id: active_id
 			}
 		})
-
+		// {"name":"sendMessage","request_id":"187","local_time":403398,"msg":{"name":"digital-options.place-digital-option",
+		// 	"version":"3.0","body":{"user_balance_id":1172704613,"instrument_id":"do1861A20250120D143100T1MCSPT","amount":"1","instrument_index":101111,"asset_id":1861}}}	
+		// {"name":"sendMessage","request_id":"125","local_time":21233,"msg":{"name":"digital-options.place-digital-option",
+		// 	"version":"3.0","body":{"user_balance_id":1172704613,"instrument_id":"do76A20250120D190000T1MCSPT","amount":"1","instrument_index":2880244,"asset_id":76}}}	
 		const callback = message => {
 			if (message.request_id == id) {
 				this.API.WebSocket.emitter.removeListener("digital-option-placed", callback)
@@ -48,3 +57,53 @@ module.exports = function() {
 		this.API.WebSocket.getMessage("digital-option-placed", callback)
 	})
 }
+// const getExpiration = require("../getexpiration")
+
+// module.exports = function() {
+// 	return new Promise((resolve, reject) => {
+// 		const {
+// 			active,
+// 			amount,
+// 			action,
+// 			duration
+// 		} = this.options
+
+// 		const expiration = getExpiration(this.API.serverTimestamp, duration, 10800000)
+
+// 		const year = expiration.getFullYear().toString()
+// 		const month = (expiration.getMonth() + 1).toString().padStart(2, "0")
+// 		const day = expiration.getDate().toString().padStart(2, "0")
+// 		const hours = expiration.getHours().toString().padStart(2, "0")
+// 		const minutes = expiration.getMinutes().toString().padStart(2, "0")
+
+// 		const formatedDate = year + month + day + hours + minutes
+
+// 		const instrumentId = "do" + active + formatedDate + "PT" + duration + "M" + action[0] + "SPT"
+
+// 		const id = this.API.WebSocket.send("sendMessage", {
+// 			name: "digital-options.place-digital-option",
+// 			version: "1.0",
+// 			body: {
+// 				user_balance_id: this.API.balance.id,
+// 				instrument_id: instrumentId,
+// 				amount
+// 			}
+// 		})
+
+// 		const callback = message => {
+// 			if (message.request_id == id) {
+// 				this.API.WebSocket.emitter.removeListener("digital-option-placed", callback)
+// 				if (message.status != 2000) return reject(message.msg)
+// 				return resolve({
+// 					status: "open",
+// 					id: message.msg.id,
+// 					win: null,
+// 					created: this.API.serverTimestamp,
+// 					expire: expiration.getTime()
+// 				})
+// 			}
+// 		}
+
+// 		this.API.WebSocket.getMessage("digital-option-placed", callback)
+// 	})
+// }

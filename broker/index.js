@@ -1,4 +1,4 @@
-const API = require("./api")
+const API = require("./API")
 const WebSocket = require("./WebSocket")
 const Http = require("./http")
 

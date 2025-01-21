@@ -1,6 +1,7 @@
 const config = require('../config.js')
 const rp = require('./reports.js')
 
+let operaciones = []
 let velasUnMin = []
 let tendencia1min
 let tendencia5seg
@@ -9,6 +10,43 @@ let mediaMovil1Min40 = 0
 let mediaMovil5seg80 = 0
 let mediaMovil5seg40 = 0
 let rsi = 0
+let volatility = ''
+
+function agregarOP(op) {
+	operaciones.push({...op})
+	if(operaciones.length > 8)
+		operaciones.shift()
+}
+
+function calcularMonto() {
+	let sumaMontos = 0;
+	let seEncontroWin = false;
+	console.log('OPERACIONES: ', operaciones);
+	
+
+	// Recorremos el array de operaciones de forma inversa
+	for (let i = operaciones.length - 1; i >= 0; i--) {
+		const operacion = operaciones[i];
+
+		if (operacion.result === "WIN") {
+			seEncontroWin = true;
+			break; // Dejamos de sumar montos al encontrar un "win"
+		}
+
+		if (operacion.result === "LOSS") {
+			sumaMontos += parseFloat(operacion.monto);
+		}
+	}
+
+	// Si no se encontró un "win" en todo el array o la última operación fue un "win"
+	if (!seEncontroWin || sumaMontos === 0) {
+		return config.inversion;
+	}
+
+	// Si se encontraron operaciones consecutivas "loss" después de un "win"
+	const resultado = (parseFloat(config.inversion) + (sumaMontos / 0.92)).toFixed(2);
+	return resultado.toString();
+}
 
 function esFinMin(timestamp) {
 	const date = new Date(timestamp * 1000);
@@ -83,7 +121,7 @@ function definirVelasUnMin(candles) {
 }
 
 module.exports = {
-	actualizarIndicadores: async (candles) => {
+	actualizarIndicadores: async (candles,API,active) => {
 		try {
 			definirVelasUnMin(candles)
 			
@@ -97,6 +135,12 @@ module.exports = {
 			definirTendencia5Seg()
 
 			rsi = calcularRsi(candles.slice(-11),10)
+
+			const assets = await API.getAssets("digital-option")
+
+			let act = assets.data.find(a => a.active_id == active.id)
+
+			volatility = act.volatility_tier
 			
 		} catch (err) {
 			throw err
@@ -106,14 +150,18 @@ module.exports = {
 	ejecutarEstrategia: async (API, active,candle) => {
 		try {
 			let direction
-			if(rsi >= 75 && tendencia1min == 'BAJISTA' && tendencia5seg == 'BAJISTA' && candle.close >= mediaMovil5seg40)
-				direction = 'PUT'
-			else if(rsi <= 25 && tendencia1min == 'ALCISTA' && tendencia5seg == 'ALCISTA' && candle.close <= mediaMovil5seg40)
-				direction = 'CALL'
+			if(volatility == 'low' || volatility == 'medium'){
+				if(rsi >= 75 && tendencia1min == 'BAJISTA' && tendencia5seg == 'BAJISTA' && candle.close >= mediaMovil5seg40)
+					direction = 'PUT'
+				else if(rsi <= 25 && tendencia1min == 'ALCISTA' && tendencia5seg == 'ALCISTA' && candle.close <= mediaMovil5seg40)
+					direction = 'CALL'
+			}
 
+				// direction = 'CALL'
+			
 			if(direction != undefined){
 				console.log('se opera: ', new Date());
-				console.log('SE EFECTUA LA OPERACION CON LOS SIGUIENTES VALOS DE LOS INDICADORES:')
+				console.log('SE EFECTUA LA OPERACION CON LOS SIGUIENTES VALOR DE LOS INDICADORES:')
 				console.log('MM 1 min 80: ', mediaMovil1Min80);
 				console.log('MM 1 min 40: ', mediaMovil1Min40);
 				console.log('MM 5 seg 80: ', mediaMovil5seg80);
@@ -122,26 +170,44 @@ module.exports = {
 				console.log('tendencia 5 seg: ', tendencia5seg);
 				console.log('rsi: ', rsi);
 				console.log('precio de vela: ', candle.close);
+				console.log('volatilidad: ', volatility);
+
+				const monto = calcularMonto()
+
+				const instruments = await API.getInstruments("digital-option",active)
+				console.log(instruments);
 				
-				const order = await API.trade({
-					active,
+
+				// API.suscribeOption("digital-option",active,instruments.instruments[0].index)
+				
+				const operacion = {
+					active: active.name,
+					active_id: active.id,
+					instrument_index: instruments.instruments[0].index,
 					action: direction,
-					amount: config.inversion,
+					amount: monto,
 					type: config.optionType,
 					duration: config.duracion_op
-				});
-		
+				}
+				// console.log('OPERACION ', operacion);
+				
+				const order = await API.trade(operacion);
+				
 				await order.close();
 				const result = order.quote.win ? "WIN" : "LOSS";
 				const op = {
 					result,
 					hr_fin: new Date(),
-					direction
+					direction, 
+					monto
 				}
+
+				agregarOP(op)
 
 				console.log('orden cerrada: ', op);
 
 				await rp.finalizarOP(API,op)
+				// await API.unSuscribeOption("digital-option",active,instruments.instruments[0].index)
 			}
 		} catch (err) {
 			throw err
