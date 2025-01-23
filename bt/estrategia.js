@@ -1,6 +1,20 @@
 const config = require('../config.js')
 const rp = require('./reports.js')
 
+// let operaciones = [
+// 	{
+// 		result: 'WIN',
+// 		hr_fin: new Date('2025-01-22T14:18:00.685Z'),
+// 		direction: 'PUT',
+// 		monto: '1'
+// 	},
+// 	{
+// 		result: 'LOSS',
+// 		hr_fin: new Date('2025-01-22T16:48:04.171Z'),
+// 		direction: 'PUT',
+// 		monto: '1'
+// 	}
+// ]
 let operaciones = []
 let velasUnMin = []
 let tendencia1min
@@ -11,6 +25,30 @@ let mediaMovil5seg80 = 0
 let mediaMovil5seg40 = 0
 let rsi = 0
 let volatility = ''
+
+let opering = false
+let last_instrument_used = 0
+
+function checkLastOP() {
+	if (operaciones.length == 0) {
+		return true; // Si el array está vacío, retorna true
+	}
+
+	// Obtén la última operación
+	const lastOperation = operaciones[operaciones.length - 1];
+	
+	// Calcula el tiempo actual y la diferencia en milisegundos
+	const now = new Date();
+	const timeDifference = now - lastOperation.hr_fin;
+
+	// Convierte la diferencia a minutos
+	const minutesDifference = timeDifference / (1000 * 60);
+	// console.log('minutos de diferencia con la ultima operacion: ', minutesDifference);
+	
+
+	// Verifica si el resultado es "WIN" y si el tiempo transcurrido es mayor a 3 minutos
+	return (lastOperation.result === "WIN" || (lastOperation.result === "LOSS" && minutesDifference > 3));
+}
 
 function agregarOP(op) {
 	operaciones.push({...op})
@@ -121,6 +159,8 @@ function definirVelasUnMin(candles) {
 }
 
 module.exports = {
+	checkOpering: () => !opering,
+
 	actualizarIndicadores: async (candles,API,active) => {
 		try {
 			definirVelasUnMin(candles)
@@ -149,67 +189,85 @@ module.exports = {
 
 	ejecutarEstrategia: async (API, active,candle) => {
 		try {
-			let direction
-			if(volatility == 'low' || volatility == 'medium'){
-				if(rsi >= 75 && tendencia1min == 'BAJISTA' && tendencia5seg == 'BAJISTA' && candle.close >= mediaMovil5seg40)
-					direction = 'PUT'
-				else if(rsi <= 25 && tendencia1min == 'ALCISTA' && tendencia5seg == 'ALCISTA' && candle.close <= mediaMovil5seg40)
-					direction = 'CALL'
-			}
-
-				// direction = 'CALL'
+			// console.log('entra a operar ', opering);
 			
-			if(direction != undefined){
-				console.log('se opera: ', new Date());
-				console.log('SE EFECTUA LA OPERACION CON LOS SIGUIENTES VALOR DE LOS INDICADORES:')
-				console.log('MM 1 min 80: ', mediaMovil1Min80);
-				console.log('MM 1 min 40: ', mediaMovil1Min40);
-				console.log('MM 5 seg 80: ', mediaMovil5seg80);
-				console.log('MM 5 seg 40: ', mediaMovil5seg40);
-				console.log('tendencia 1 min: ', tendencia1min);
-				console.log('tendencia 5 seg: ', tendencia5seg);
-				console.log('rsi: ', rsi);
-				console.log('precio de vela: ', candle.close);
-				console.log('volatilidad: ', volatility);
-
-				const monto = calcularMonto()
-
-				const instruments = await API.getInstruments("digital-option",active)
-				console.log(instruments);
-				
-
-				// API.suscribeOption("digital-option",active,instruments.instruments[0].index)
-				
-				const operacion = {
-					active: active.name,
-					active_id: active.id,
-					instrument_index: instruments.instruments[0].index,
-					action: direction,
-					amount: monto,
-					type: config.optionType,
-					duration: config.duracion_op
+			if(!opering){
+				opering = true
+				let direction
+				// console.log('check ', checkLastOP());
+				// console.log('volatility ', volatility);
+				// console.log('rsi: ', rsi);
+				if((volatility == 'low' || volatility == 'medium') && checkLastOP()){
+					if(rsi >= 75 && tendencia1min == 'BAJISTA' && tendencia5seg == 'BAJISTA' && candle.close >= mediaMovil5seg40)
+						direction = 'PUT'
+					else if(rsi <= 25 && tendencia1min == 'ALCISTA' && tendencia5seg == 'ALCISTA' && candle.close <= mediaMovil5seg40)
+						direction = 'CALL'
 				}
-				// console.log('OPERACION ', operacion);
+				// }else
+				// 	console.log('NO OPERAMOS PORQUE LA VOLATILIDAD ES: ' + volatility + ' O PORQUE LA ULTIMA OPERACION FALLO HACE MENOS DE 3 MINUTOS ' + operaciones[operaciones.length - 1].hr_fin);
 				
-				const order = await API.trade(operacion);
 				
-				await order.close();
-				const result = order.quote.win ? "WIN" : "LOSS";
-				const op = {
-					result,
-					hr_fin: new Date(),
-					direction, 
-					monto
+				if(direction != undefined){
+					console.log('se opera: ', new Date());
+					console.log('SE EFECTUA LA OPERACION CON LOS SIGUIENTES VALOR DE LOS INDICADORES:')
+					console.log('MM 1 min 80: ', mediaMovil1Min80);
+					console.log('MM 1 min 40: ', mediaMovil1Min40);
+					console.log('MM 5 seg 80: ', mediaMovil5seg80);
+					console.log('MM 5 seg 40: ', mediaMovil5seg40);
+					console.log('tendencia 1 min: ', tendencia1min);
+					console.log('tendencia 5 seg: ', tendencia5seg);
+					console.log('rsi: ', rsi);
+					console.log('precio de vela: ', candle.close);
+					console.log('volatilidad: ', volatility);
+
+					const monto = calcularMonto()
+
+					const instruments = await API.getInstruments("digital-option",active)
+					// console.log(instruments);
+					
+					let instruments_free = instruments.instruments.filter(i => i.index != last_instrument_used)
+					last_instrument_used = instruments_free[instruments_free.length - 1].index
+					// API.suscribeOption("digital-option",active,instruments.instruments[0].index)
+					
+					const operacion = {
+						active: active.name,
+						active_id: active.id,
+						instrument_index: last_instrument_used,
+						action: direction,
+						amount: monto,
+						type: config.optionType,
+						duration: config.duracion_op
+					}
+					// console.log('OPERACION ', operacion);
+					
+					const order = await API.trade(operacion);
+					
+					await order.close();
+					const result = order.quote.win ? "WIN" : "LOSS";
+					const op = {
+						result,
+						hr_fin: new Date(),
+						direction, 
+						monto
+					}
+
+					agregarOP(op)
+
+					console.log('orden cerrada: ', op);
+
+					await rp.finalizarOP(API,op)
+					
+					// await API.unSuscribeOption("digital-option",active,instruments.instruments[0].index)
 				}
+					
+				opering = false
 
-				agregarOP(op)
-
-				console.log('orden cerrada: ', op);
-
-				await rp.finalizarOP(API,op)
-				// await API.unSuscribeOption("digital-option",active,instruments.instruments[0].index)
+				return true
+			}else{
+				return true
 			}
 		} catch (err) {
+			opering = false
 			throw err
 		}
 	}

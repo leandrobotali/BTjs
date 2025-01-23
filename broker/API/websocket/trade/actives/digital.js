@@ -11,7 +11,9 @@ module.exports = function() {
 			duration
 		} = this.options
 
-		const expiration = getExpiration(this.API.serverTimestamp, duration, 10800000)
+		const expiration = getExpiration(Date.now(), duration, 10800000)
+		console.log('EXPIRACION: ',expiration);
+		
 
 		const year = expiration.getFullYear().toString()
 		const month = (expiration.getMonth() + 1).toString().padStart(2, "0")
@@ -24,6 +26,10 @@ module.exports = function() {
 		const formateTime = hours + minutes + seconds
 
 		const instrumentId = "do" + active_id + "A" + formatedDate + "D" + formateTime + "T" + duration + "M" + action[0] + "SPT"
+
+		console.log('instrument ID: ', instrumentId);
+		console.log('instrument INDEX: ', instrument_index);
+		
 
 		const id = this.API.WebSocket.send("sendMessage", {
 			name: "digital-options.place-digital-option",

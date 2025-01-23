@@ -1,11 +1,11 @@
 module.exports = function(active, size, callback) {
 	return new Promise((resolve, reject) => {
 		
-		if (!(active.name in this.actives))
-			return reject("Activo inválido.")
+		// if (!(active.name in this.actives))
+		// 	return reject("Activo inválido.")
 
 		// const activeId = this.actives[active.name]
-
+		console.log('INICIAMOS LA GENERACIÓN DE VELAS DEL ACTIVO ' + active.name)
 		this.WebSocket.send("subscribeMessage", {
 			name: "candle-generated",
 			params: {

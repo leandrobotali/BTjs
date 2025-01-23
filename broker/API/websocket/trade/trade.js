@@ -8,9 +8,9 @@ function trade(API, options) {
 	this.options = options
 
 	return new Promise(async (resolve, reject) => {
-		if (!(this.options.active in this.API.actives))
-			return reject("(trade) Activo inválido.")
-		else if (Number.isNaN(parseInt(this.options.amount)))
+		// if (!(this.options.active in this.API.actives))
+		// 	return reject("(trade) Activo inválido.")
+		if (Number.isNaN(parseInt(this.options.amount)))
 			return reject("(trade) Valor inválido.")
 		else if (["CALL", "PUT"].indexOf(this.options.action) == -1)
 			return reject("(trade) Ação inválida.")

@@ -7,7 +7,7 @@ module.exports = function(active, size, count, to) {
 			name: "get-candles",
 			version: "2.0",
 			body: {
-				active_id: this.actives[active.name],
+				active_id: active.id,
 				size,
 				to,
 				count
