@@ -12,7 +12,7 @@ module.exports = function() {
 		} = this.options
 
 		const expiration = getExpiration(Date.now(), duration, 10800000)
-		console.log('EXPIRACION: ',expiration);
+		// console.log('EXPIRACION: ',expiration);
 		
 
 		const year = expiration.getFullYear().toString()
@@ -27,8 +27,8 @@ module.exports = function() {
 
 		const instrumentId = "do" + active_id + "A" + formatedDate + "D" + formateTime + "T" + duration + "M" + action[0] + "SPT"
 
-		console.log('instrument ID: ', instrumentId);
-		console.log('instrument INDEX: ', instrument_index);
+		// console.log('instrument ID: ', instrumentId);
+		// console.log('instrument INDEX: ', instrument_index);
 		
 
 		const id = this.API.WebSocket.send("sendMessage", {

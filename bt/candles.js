@@ -88,6 +88,8 @@ async function loadCandles(API,active) {
 async function callback (candle,API,active) {
 	try {
 		/* validamos que no se esté operando */
+		// console.log('candle close: ', candle.close);
+		
 		if(!operating){
 			// console.log('entra en callback: ');
 			
@@ -131,7 +133,7 @@ async function callback (candle,API,active) {
 					}
 				}else if(initBlDiario)
 					initBlDiario = false
-
+				
 				if(candle.id != lastCandleGenerated.id && lastCandleGenerated.id != 0){
 					/* actualizamos las velas, solo si se trata de una nueva vela*/
 					await actualizarCandles(lastCandleGenerated,API,active)
@@ -166,7 +168,7 @@ module.exports = {
 			if(!genereting){
 				genereting = true
 				/* Cargamos en memoria las velas ya formadas */
-				console.log('Active ', active);
+				// console.log('Active ', active);
 				
 				await loadCandles(API,active)
 				console.log('VELAS CARGADAS');

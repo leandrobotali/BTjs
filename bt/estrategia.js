@@ -22,7 +22,9 @@ let tendencia5seg
 let mediaMovil1Min80 = 0
 let mediaMovil1Min40 = 0
 let mediaMovil5seg80 = 0
+let mediaMovil5seg80Atrasada = 0
 let mediaMovil5seg40 = 0
+let mediaMovil5seg40Atrasada = 0
 let rsi = 0
 let volatility = ''
 
@@ -59,7 +61,7 @@ function agregarOP(op) {
 function calcularMonto() {
 	let sumaMontos = 0;
 	let seEncontroWin = false;
-	console.log('OPERACIONES: ', operaciones);
+	// console.log('OPERACIONES: ', operaciones);
 	
 
 	// Recorremos el array de operaciones de forma inversa
@@ -133,9 +135,15 @@ function definirTendencia1Min() {
 }
 
 function definirTendencia5Seg() {
-	if(parseFloat((mediaMovil5seg40 + 0.000025).toFixed(6)) <= mediaMovil5seg80)
+	// if((parseFloat((mediaMovil5seg40 + 0.000045).toFixed(6)) <= mediaMovil5seg80) &&
+	// (mediaMovil5seg40Atrasada >= parseFloat((mediaMovil5seg40 + 0.00002).toFixed(6))) &&
+	// (mediaMovil5seg80Atrasada >= parseFloat((mediaMovil5seg80 + 0.00002).toFixed(6))))
+	if(parseFloat((mediaMovil5seg40 + 0.000045).toFixed(6)) <= mediaMovil5seg80)
 		tendencia5seg = 'BAJISTA'
-	else if(parseFloat((mediaMovil5seg80 + 0.000025).toFixed(6)) <= mediaMovil5seg40)
+	else if(parseFloat((mediaMovil5seg80 + 0.000045).toFixed(6)) <= mediaMovil5seg40)
+	// else if((parseFloat((mediaMovil5seg80 + 0.000045).toFixed(6)) <= mediaMovil5seg40) &&
+	// (parseFloat((mediaMovil5seg40Atrasada + 0.00002).toFixed(6)) <= mediaMovil5seg40) &&
+	// (parseFloat((mediaMovil5seg80Atrasada + 0.00002).toFixed(6)) <= mediaMovil5seg80))
 		tendencia5seg = 'ALCISTA'
 	else
 		tendencia5seg = 'NONE'
@@ -171,10 +179,13 @@ module.exports = {
 			mediaMovil5seg80 = calcularMedia(candles.slice(-80))
 			mediaMovil5seg40 = calcularMedia(candles.slice(-40))
 
+			// mediaMovil5seg80Atrasada = calcularMedia(candles.slice(-90,-10))
+			// mediaMovil5seg40Atrasada = calcularMedia(candles.slice(-50,-10))
+
 			definirTendencia1Min()
 			definirTendencia5Seg()
 
-			rsi = calcularRsi(candles.slice(-11),10)
+			rsi = calcularRsi(candles.slice(-13),12)
 
 			const assets = await API.getAssets("digital-option")
 
@@ -194,19 +205,24 @@ module.exports = {
 			if(!opering){
 				opering = true
 				let direction
-				// console.log('check ', checkLastOP());
-				// console.log('volatility ', volatility);
-				// console.log('rsi: ', rsi);
+				console.log('MM 1 min 80: ', mediaMovil1Min80);
+				console.log('MM 1 min 40: ', mediaMovil1Min40);
+				console.log('MM 5 seg 80: ', mediaMovil5seg80);
+				console.log('MM 5 seg 40: ', mediaMovil5seg40);
+				console.log('tendencia 1 min: ', tendencia1min);
+				console.log('tendencia 5 seg: ', tendencia5seg);
+				console.log('rsi: ', rsi);
+				console.log('precio de vela: ', candle.close);
+				console.log('volatilidad: ', volatility);
 				if((volatility == 'low' || volatility == 'medium') && checkLastOP()){
 					if(rsi >= 75 && tendencia1min == 'BAJISTA' && tendencia5seg == 'BAJISTA' && candle.close >= mediaMovil5seg40)
-						direction = 'PUT'
+						direction = active.name === config.activeSecondary ? 'CALL' : 'PUT';
 					else if(rsi <= 25 && tendencia1min == 'ALCISTA' && tendencia5seg == 'ALCISTA' && candle.close <= mediaMovil5seg40)
-						direction = 'CALL'
+						direction = active.name === config.activeSecondary ? 'PUT' : 'CALL';
 				}
 				// }else
 				// 	console.log('NO OPERAMOS PORQUE LA VOLATILIDAD ES: ' + volatility + ' O PORQUE LA ULTIMA OPERACION FALLO HACE MENOS DE 3 MINUTOS ' + operaciones[operaciones.length - 1].hr_fin);
-				
-				
+
 				if(direction != undefined){
 					console.log('se opera: ', new Date());
 					console.log('SE EFECTUA LA OPERACION CON LOS SIGUIENTES VALOR DE LOS INDICADORES:')

@@ -16,14 +16,17 @@ function fileName() {
 	const month = String(yesterday.getMonth() + 1).padStart(2, '0'); // Obtener el mes (recuerda que los meses son 0-indexed) y añadir un cero inicial
 	const year = yesterday.getFullYear(); // Obtener el año
 
-	return `reportes/${day}-${month}-${year}.txt`; // Crear el nombre del archivo
+	return `${day}-${month}-${year}.txt`; // Crear el nombre del archivo
 }
 
 async function crearArchivo(name,contenido) {
 	try {
-		await fs.writeFile(path.join(__dirname, name), JSON.stringify(contenido, null, 2));
+		const rutaArchivo = path.resolve(__dirname, "../../reportes", name);
+		await fs.writeFile(rutaArchivo, JSON.stringify(contenido, null, 2));
 		console.log('Archivo creado exitosamente');
 	} catch (err) {
+		console.log('error: ', err);
+		
 		throw ('Error al crear el archivo:', err);
 	}
 }
@@ -42,6 +45,7 @@ module.exports = {
 				dinero_actual: balance.amount
 			}
 		} catch (err) {
+			console.log('error: ', err);
 			throw err
 		}
 	},
@@ -61,6 +65,7 @@ module.exports = {
 				wr_por_hr: []
 			}
 		} catch (err) {
+			console.log('error: ', err);
 			throw err
 		}
 	},
@@ -74,6 +79,7 @@ module.exports = {
 			balance_total.win_rate = ((balance_total.operaciones_ganadas * 100 ) / balance_total.operaciones_totales)
 			balance_total.dinero_actual = balance.amount
 		} catch (err) {
+			console.log('error: ', err);
 			throw err
 		}
 	},
@@ -81,8 +87,9 @@ module.exports = {
 	almacenarReportes: async () => {
 		try {
 			await crearArchivo(fileName(), balance_diario)
-			await crearArchivo('reportes/balance_total.txt', balance_total)
+			await crearArchivo('balance_total.txt', balance_total)
 		} catch (err) {
+			console.log('error: ', err);
 			throw err
 		}
 	},
@@ -103,7 +110,7 @@ module.exports = {
 		operaciones_hora.fin = new Date()
 		balance_diario.wr_por_hr.push({...operaciones_hora})
 
-		console.log('OPERACIONES ULTIMA HORA: ', operaciones_hora);
+		// console.log('OPERACIONES ULTIMA HORA: ', operaciones_hora);
 
 		module.exports.initBalanceHr
 	},
@@ -116,6 +123,7 @@ module.exports = {
 
 			console.log('BALANCES INICIALIZADOS CORRECTAMENTE.');
 		} catch (err) {
+			console.log('error: ', err);
 			throw err
 		}
 	},
@@ -126,6 +134,7 @@ module.exports = {
 			await module.exports.almacenarReportes()
 			await module.exports.initBalanceDiario(API)
 		} catch (err) {
+			console.log('error: ', err);
 			throw err
 		}
 	},
@@ -156,6 +165,7 @@ module.exports = {
 
 			operaciones_hora.operaciones.push(operacion)
 		} catch (err) {
+			console.log('error: ', err);
 			throw err
 		}
 	}
