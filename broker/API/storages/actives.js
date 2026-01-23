@@ -1,5 +1,5 @@
 module.exports = {
-	"EURUSD": 1,
+	"EURUSD": 1861,
 	"EURGBP": 2,
 	"GBPJPY": 3,
 	"EURJPY": 4,

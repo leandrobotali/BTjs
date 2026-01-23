@@ -1,11 +1,9 @@
-module.exports = function(option) {
+module.exports = function(active) {
 	return new Promise((resolve, reject) => {
 		const id = this.WebSocket.send("sendMessage", {
-			name: "get-underlying-list",
-			version: "2.0",
-			body: {
-				type: option + "-option"
-			}
+			name: "get-initialization-data",
+			version: "4.0",
+			body: {}
 		})
 			
 		// Callback que manejará la respuesta
@@ -13,27 +11,19 @@ module.exports = function(option) {
 			// Comprobar si el request_id coincide con el que hemos enviado
 			if (message.request_id == id) {
 				// Remover el listener para evitar recibir respuestas múltiples para este request
-				this.WebSocket.emitter.removeListener("underlying-list", callback);
-				
-				let actives = message.msg.underlying
-				
-				actives.map(a => {
-					let fecha = Date.now()
-					let act = a
-					act.open = false
-					act.schedule.forEach(s => {
-						if((s.open * 1000) < fecha && fecha < (s.close * 1000)){
-							act.open = true
-						}
-					});
-					return act
-				});
+				this.WebSocket.emitter.removeListener("initialization-data", callback);
+				let resultado = Object.values(message.msg.turbo.actives).find(obj => obj.name === active);
+
+				console.log('mensage: ', resultado);
+
 				// Devolver la respuesta completa
-				return resolve(actives);
+				return resolve(resultado);
 			}
 		}
 
-		// Registrar el listener para el evento "underlying-list"
-		this.WebSocket.getMessage("underlying-list", callback);
+		// Registrar el listener para el evento "initialization-data"
+		this.WebSocket.getMessage("initialization-data", callback);
 	});
 }
+
+// {"name":"sendMessage","request_id":"38","local_time":11034,"msg":{"name":"get-initialization-data","version":"4.0","body":{}}}
