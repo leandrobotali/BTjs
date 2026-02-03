@@ -11,22 +11,22 @@ async function executeOperation(API, decision) {
 		console.log('[OPERATION] Operación en curso, descartando nueva señal')
 		return null
 	}
-	
+
 	try {
 		// Verificar que el activo esté abierto
-		const isOpen = await checkActiveBeforeOperation(API)
-		if (!isOpen) {
-			console.log('[OPERATION] Activo cerrado, operación cancelada')
-			return {
-				executed: false,
-				reason: 'Activo cerrado'
-			}
-		}
-		
+		// const isOpen = await checkActiveBeforeOperation(API)
+		// if (!isOpen) {
+		// 	console.log('[OPERATION] Activo cerrado, operación cancelada')
+		// 	return {
+		// 		executed: false,
+		// 		reason: 'Activo cerrado'
+		// 	}
+		// }
+
 		console.log(`\n[OPERATION] Ejecutando ${decision.direction} en ${config.activePrincipal}`)
 		console.log(`[OPERATION] Monto: ${config.inversion}`)
 		console.log(`[OPERATION] Duración: ${config.duracion_op} min`)
-		
+
 		const order = await API.trade({
 			active: config.activePrincipal,
 			action: decision.direction,
@@ -34,16 +34,16 @@ async function executeOperation(API, decision) {
 			type: config.optionType,
 			duration: config.duracion_op
 		})
-		
+
 		console.log('[OPERATION] Orden abierta, esperando cierre...')
-		
+
 		await order.close()
-		
+
 		const result = order.quote.win ? 'WIN' : 'LOSS'
 		const profit = order.quote.win ? order.quote.profit : -parseFloat(config.inversion)
-		
+
 		console.log(`[OPERATION] Resultado: ${result} | Ganancia: ${profit}`)
-		
+
 		const operation = {
 			result,
 			profit,
@@ -55,7 +55,7 @@ async function executeOperation(API, decision) {
 		}
 
 		addOperation(operation)
-		
+
 		return {
 			executed: true,
 			operation

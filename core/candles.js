@@ -15,23 +15,24 @@ async function loadInitialCandles(API, active) {
 			parseInt(config.cantCandles),
 			Date.now()
 		)
-		
+
 		// Eliminar última vela (está en formación)
 		// historicalCandles.pop()
-		
+
 		candles = historicalCandles.map(c => ({
 			...c,
 			direction: c.open < c.close ? 'ALCISTA' : (c.open > c.close ? 'BAJISTA' : 'NONE')
 		}))
-		
+
 		console.log(`[CANDLES] Cargadas ${candles.length} velas en memoria`)
+		// console.log('[CANDLES] Últimas 3 velas:', candles.slice(-3))
 		console.log('[CANDLES] Últimas 3 velas:', candles.slice(-3).map(c => ({
 			id: c.id,
 			open: c.open,
 			close: c.close,
 			direction: c.direction
 		})))
-		
+
 		return candles
 	} catch (err) {
 		throw new Error(`Error cargando velas iniciales: ${err.message}`)
@@ -42,30 +43,30 @@ function addNewCandle(candle) {
 	if (!candleMutex.lock()) {
 		return false // Mutex ocupado, descartar
 	}
-	
+
 	try {
-		if(lastCandleId === null){
+		if (lastCandleId === null) {
 			lastCandleId = candle.id
 		}
 		// Verificar si es una vela nueva
 		if (lastCandleId === candle.id) {
 			return false
 		}
-		
+
 		lastCandleId = candle.id
-		
+
 		const newCandle = {
 			...candle,
 			direction: candle.open < candle.close ? 'ALCISTA' : (candle.open > candle.close ? 'BAJISTA' : 'NONE')
 		}
-		
+
 		candles.push(newCandle)
-		
+
 		// Mantener solo las últimas cantCandles
 		if (candles.length > parseInt(config.cantCandles)) {
 			candles.shift()
 		}
-		
+
 		return true
 	} finally {
 		candleMutex.unlock()
@@ -84,9 +85,12 @@ function addNewTick(tick) {
 	if (!candleMutexTick.lock()) {
 		return false
 	}
-	
+
 	try {
+		// console.log('[TICK] Nuevo tick:', tick)
 		ticks.push(tick)
+		// console.log('ticks: ', ticks);
+
 		return true
 	} finally {
 		candleMutexTick.unlock()
