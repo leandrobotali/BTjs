@@ -2,11 +2,12 @@ require('dotenv').config();
 
 module.exports = {
 	// Configuración de Estrategia LMTA
+	version: '1.0.0',
 	strategy: {
 		minTicks: 55, // Mínimo de ticks para analizar
 		whiplashWindow: 15, // Últimos N ticks para detectar latigazo
 		stagnation: {
-			maxTicks: 8, // Ticks consecutivos para considerar estancamiento
+			maxTicks: 10, // Ticks consecutivos para considerar estancamiento (Subido de 8 a 10 para filtrar ruido)
 			priceThreshold: 0.000010 // Variación máxima de precio para estancamiento
 		},
 		levels: {
@@ -17,7 +18,7 @@ module.exports = {
 			ratioThreshold: 2.0 // Ratio para considerar movimiento irregular (> 2x)
 		}
 	},
-
+	version: 'V2',
 	username: process.env.USERIQ,
 	passwd: process.env.PASSWD,
 

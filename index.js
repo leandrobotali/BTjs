@@ -48,8 +48,13 @@ async function handleNewCandle(API, candle) {
 			console.log('[STRATEGY] Analizando...')
 
 			const decision = await analyzeStrategy(getCandles(), getTicks())
-
-			console.log(decision)
+			console.log('decision : ', {
+				shouldOperate: decision.shouldOperate,
+				direction: decision.direction,
+				amount: decision.amount,
+				reason: decision.reason,
+				analysis: decision.analysis
+			});
 
 			clearTicks()
 

@@ -144,66 +144,124 @@ const analyzeStrategy = async (candles, ticks) => {
 	let confidence = 0
 	let reason = ''
 
+	// FILTRO 0: Volatilidad Mínima
+	// Si la vela se movió menos de X pips en total, es ruido. Ignorar.
+	const totalMove = Math.abs(closePrice - openPrice)
+	// Unumbral conservador: 0.000020 (20 micro-pips/ticks). Si es menor, el mercado está muerto.
+	if (totalMove < 0.000020 && !patterns.length) { // Excepción si hay patrón chartista muy claro
+		logger.add(`[FILTER] Mercado estático (Movimiento: ${totalMove.toFixed(6)}). Ignorando ruido.`)
+		return { shouldOperate: false, direction: '', reason: 'Mercado sin volumen (Ruido)', analysis: logger.getReport() }
+	}
+
 	// Caso: Latigazo de Desesperación
-	// Si hay latigazo hacia un nivel y se frena (o cierra justo en nivel), es reversión
+	// REFINAMIENTO: El latigazo debe mostrar rechazo inmediato. 
+	// Si cierra EN EL MÁXIMO del latigazo (sin mecha), es rotura, no reversión.
 	if (isWhiplash && levelCheck.isAtLevel) {
+		const closeNearExtremes = Math.abs(closePrice - ticks[ticks.length - 1]) < 0.000010
+
 		// Latigazo alcista contra resistencia -> VENTA
 		if (whiplashDirection === 'ALCISTA' && (levelCheck.level.type === 'RESISTANCE' || levelCheck.level.type === 'ROUND_NUMBER')) {
-			decision = 'PUT'
-			reason = 'Latigazo de desesperación contra resistencia/nivel'
-			confidence = 90
+			// Verificar que no cerró rompiendo con fuerza (necesitamos rechazo/mecha o cierre bajo nivel)
+			// Si el precio de cierre > nivel + buffer, es rotura.
+			const isBreakout = closePrice > (levelCheck.level.price + 0.000020)
+
+			if (!isBreakout) {
+				decision = 'PUT'
+				reason = 'Latigazo de desesperación contra resistencia/nivel'
+				confidence = 90
+			} else {
+				logger.add(`[FILTER] Latigazo alcista rompió nivel (Cierre: ${closePrice} > Nivel: ${levelCheck.level.price}). Posible ruptura. WAIT.`)
+			}
 		}
 		// Latigazo bajista contra soporte -> COMPRA
 		else if (whiplashDirection === 'BAJISTA' && (levelCheck.level.type === 'SUPPORT' || levelCheck.level.type === 'ROUND_NUMBER')) {
-			decision = 'CALL'
-			reason = 'Latigazo de desesperación contra soporte/nivel'
-			confidence = 90
+			const isBreakout = closePrice < (levelCheck.level.price - 0.000020)
+
+			if (!isBreakout) {
+				decision = 'CALL'
+				reason = 'Latigazo de desesperación contra soporte/nivel'
+				confidence = 90
+			} else {
+				logger.add(`[FILTER] Latigazo bajista rompió nivel. Posible ruptura. WAIT.`)
+			}
 		}
 	}
 
 	// Caso: Agotamiento / Estancamiento al final
-	// Si venía con fuerza y se estancó al final (PHASE 2 stangation high)
+	// MEJORA CRÍTICA: "Estancamiento Extremo" SIN NIVEL es un suicidio en tendencia.
+	// Solo operamos reversión por estancamiento si ESTAMOS EN UN NIVEL.
 	else if (endAnalysis.maxStagnation >= config.strategy.stagnation.maxTicks) {
-		// FILTRO "TIERRA DE NADIE":
-		// Solo operamos reversión por estancamiento si:
-		// A) Estamos en un Nivel (CheckLevel)
-		// B) O el estancamiento es brutal (> 12 ticks)
 
 		const isExtremeStagnation = endAnalysis.maxStagnation >= 12
-		const isValidReversalContext = levelCheck.isAtLevel || isExtremeStagnation
-
-		if (isValidReversalContext) {
+		// REGLA DE ORO: Si hay estancamiento, SOLO operamos si estamos en un nivel.
+		// El estancamiento en "tierra de nadie" a menudo es continuación.
+		if (levelCheck.isAtLevel) {
 			// Si se estancó arriba -> VENTA (posible)
 			if (endAnalysis.dominantGroup === 'COMPRADORES') {
 				decision = 'PUT'
-				reason = isExtremeStagnation ? 'Estancamiento extremo de compradores' : 'Agotamiento en Nivel clave'
-				confidence = 75
+				reason = isExtremeStagnation ? 'Estancamiento extremo de compradores en Nivel' : 'Agotamiento en Nivel clave'
+				confidence = 80
 			} else if (endAnalysis.dominantGroup === 'VENDEDORES') {
 				decision = 'CALL'
-				reason = isExtremeStagnation ? 'Estancamiento extremo de vendedores' : 'Agotamiento en Nivel clave'
-				confidence = 75
+				reason = isExtremeStagnation ? 'Estancamiento extremo de vendedores en Nivel' : 'Agotamiento en Nivel clave'
+				confidence = 80
 			}
 		} else {
-			logger.add(`[FILTER] Estancamiento detectado (${endAnalysis.maxStagnation} ticks) pero sin nivel de apoyo. Se ignora por "Tierra de Nadie".`)
+			// Si es estancamiento extremo PERO no hay nivel, operamos A FAVOR DE LA TENDENCIA si existe.
+			// "Escurriendo el precio"
+			if (isExtremeStagnation && trend !== 'LATERAL' && trend !== 'NEUTRAL') {
+				logger.add(`[INFO] Estancamiento extremo sin nivel. Evaluando continuidad de tendencia ${trend}.`)
+				// Si tendencia es Alcista y se estancan los Vendedores (pullback) -> CALL
+				if (trend === 'ALCISTA' && endAnalysis.dominantGroup === 'VENDEDORES') {
+					decision = 'CALL'
+					reason = 'Continuidad: Estancamiento de vendedores en tendencia alcista'
+					confidence = 70
+				}
+				// Si tendencia es Bajista y se estancan los Compradores -> PUT
+				else if (trend === 'BAJISTA' && endAnalysis.dominantGroup === 'COMPRADORES') {
+					decision = 'PUT'
+					reason = 'Continuidad: Estancamiento de compradores en tendencia bajista'
+					confidence = 70
+				} else {
+					logger.add(`[FILTER] Estancamiento en contra de tendencia sin nivel. Ignorar.`)
+				}
+			} else {
+				logger.add(`[FILTER] Estancamiento detectado (${endAnalysis.maxStagnation} ticks) en Tierra de Nadie. Se ignora.`)
+			}
 		}
 	}
 
+
 	// Caso: Continuidad de Fuerza Natural
-	// Si Phase 1 y Phase 2 son consistentes, no hay irregularidades graves, y no hay niveles bloqueando
 	else if (
 		startAnalysis.dominantGroup === endAnalysis.dominantGroup &&
 		startAnalysis.irregularMovements === 0 &&
 		endAnalysis.irregularMovements === 0 &&
 		!levelCheck.isAtLevel // No chocamos con nivel
 	) {
-		if (startAnalysis.dominantGroup === 'COMPRADORES') {
-			decision = 'CALL'
-			reason = 'Fuerza natural alcista sostenida sin bloqueos'
-			confidence = 80
+		// Validar que realmente hubo movimiento (filtro de ruido extra)
+		const bodySize = Math.abs(closePrice - openPrice)
+		if (bodySize > 0.000050) { // Mínimo 5 pips de cuerpo para confiar en fuerza
+
+			// NUEVO: Filtro de Alineación con Tendencia (Solo para Fuerza Natural)
+			const isTrendAligned = (startAnalysis.dominantGroup === 'COMPRADORES' && (trend === 'ALCISTA' || trend === 'LATERAL' || trend === 'NEUTRAL')) ||
+				(startAnalysis.dominantGroup === 'VENDEDORES' && (trend === 'BAJISTA' || trend === 'LATERAL' || trend === 'NEUTRAL'))
+
+			if (isTrendAligned) {
+				if (startAnalysis.dominantGroup === 'COMPRADORES') {
+					decision = 'CALL'
+					reason = 'Fuerza natural alcista sostenida sin bloqueos'
+					confidence = 85 // Subimos confianza si pasa filtros
+				} else {
+					decision = 'PUT'
+					reason = 'Fuerza natural bajista sostenida sin bloqueos'
+					confidence = 85
+				}
+			} else {
+				logger.add(`[FILTER] Fuerza natural (${startAnalysis.dominantGroup}) en contra de tendencia general (${trend}). Riesgo alto. WAIT.`)
+			}
 		} else {
-			decision = 'PUT'
-			reason = 'Fuerza natural bajista sostenida sin bloqueos'
-			confidence = 80
+			logger.add(`[FILTER] Fuerza natural detectada pero vela muy pequeña (${bodySize.toFixed(6)}). Ignorar.`)
 		}
 	}
 
@@ -215,17 +273,15 @@ const analyzeStrategy = async (candles, ticks) => {
 			logger.add(`[BONUS] A favor de tendencia general (${trend}). +10% confianza.`)
 		}
 
-		// Verificar patrones en contra
+		// VETO POR PATRONES (Hard Block)
+		// Si un patrón dice lo contrario, NO OPERAMOS. La vista gana a los ticks.
 		const contraryPattern = patterns.find(p => p.prediction !== decision)
 		if (contraryPattern) {
-			confidence -= 40 // Aumentado de 20 a 40 para ser más estricto
-			logger.add(`[WARNING] Patrón en contra detectado (${contraryPattern.name}). -40% confianza.`)
-			if (confidence < 60) {
-				decision = 'WAIT'
-				reason = 'Cancelado por conflicto con patrones'
-			}
+			logger.add(`[VETO] Operación CANCELADA. Patrón visual (${contraryPattern.name} -> ${contraryPattern.prediction}) contradice estrategia de ticks (${decision}).`)
+			decision = 'WAIT'
+			reason = `Cancelado por conflicto con patrón ${contraryPattern.name}`
+			confidence = 0
 		}
-
 	}
 
 	logger.add(`[DECISION] Resultado Final: ${decision} (Confianza: ${confidence}%)`)
