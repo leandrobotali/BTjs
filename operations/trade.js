@@ -51,7 +51,9 @@ async function executeOperation(API, decision) {
 			amount: config.inversion,
 			timestamp: new Date(),
 			reason: decision.reason,
-			analysis: decision.analysis
+			analysis: decision.analysis,
+			ticks: decision.ticks,
+			indicators: decision.indicators
 		}
 
 		addOperation(operation)

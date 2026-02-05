@@ -34,7 +34,7 @@ async function handleNewCandle(API, candle) {
 	}
 
 	try {
-		checkAndSaveHourly()
+		// checkAndSaveHourly() - Deprecated: Se guarda por operación en tiempo real
 
 		const added = addNewCandle(candle)
 		if (!added) {
@@ -42,7 +42,7 @@ async function handleNewCandle(API, candle) {
 			addNewTick(candle.close)
 		} else {
 			/* si se agrego una nueva vela, procesamos la operación */
-			console.log('candleee : ', candle);
+			// console.log('candleee : ', candle);
 
 			console.log(`\n[CANDLE] Nueva vela: ${candle.id} | ${candle.open} -> ${candle.close}`)
 			console.log('[STRATEGY] Analizando...')
