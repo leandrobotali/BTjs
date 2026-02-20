@@ -1,10 +1,10 @@
 const config = require('./config.js')
-const { loadActiveSchedule, reloadSchedulePeriodically } = require('./core/active.js')
+const { loadActiveSchedule } = require('./core/active.js')
 const { loadInitialCandles, addNewCandle, getCandles, addNewTick, clearTicks, getTicks, setCachedLevels } = require('./core/candles.js')
 const { getLevels } = require('./indicators/levels.js')
 const { analyzeStrategy } = require('./strategy/strategy-core.js')
 const { executeOperation, isOperating } = require('./operations/trade.js')
-const { addOperation, checkAndSaveHourly } = require('./reports/manager.js')
+const { addOperation, checkAndSaveHourly, addSkipped } = require('./reports/manager.js')
 const SimpleMutex = require('./core/mutex.js')
 const { checkActiveBeforeOperation } = require('./core/active.js')
 
@@ -17,9 +17,6 @@ async function initialize(API) {
 
 		console.log('[INIT] Cargando velas históricas...')
 		await loadInitialCandles(API, config.activePrincipal)
-
-		console.log('[INIT] Configurando recarga periódica del schedule...')
-		reloadSchedulePeriodically(API, 1) // Recarga cada 1 hora
 
 		console.log('[INIT] Suscribiéndose a generación de velas...')
 		API.onCandleGenerate(config.activePrincipal, async (candle) => {
@@ -66,8 +63,6 @@ async function handleNewCandle(API, candle) {
 				analysis: decision.analysis
 			})
 
-			clearTicks()
-
 			if (isOperating()) {
 				console.log('[OPERATION] Operación en curso, no se ejecuta nueva operación')
 				return
@@ -84,12 +79,14 @@ async function handleNewCandle(API, candle) {
 				executeOperation(API, decision)
 			} else {
 				console.log('[DECISION] No se opera en esta vela')
+				addSkipped(decision)
 			}
 		}
 	} catch (err) {
 		console.error('[ERROR] Error procesando vela:', err.message)
 		console.error('[ERROR] Stack:', err.stack)
 	} finally {
+		clearTicks()
 		callbackMutex.unlock()
 	}
 }

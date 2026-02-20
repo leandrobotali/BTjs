@@ -5,6 +5,7 @@ module.exports = {
 	// Configuración de Estrategia LMTA
 	strategy: {
 		minTicks: 55, // Mínimo de ticks para analizar
+		minConfidence: 65, // Confianza mínima para ejecutar operación
 		whiplashWindow: 15, // Últimos N ticks para detectar latigazo
 		stagnation: {
 			maxTicks: 8, // Ticks consecutivos para considerar estancamiento
@@ -36,6 +37,17 @@ module.exports = {
 		},
 		naturality: {
 			ratioThreshold: 2.0 // Ratio para considerar movimiento irregular (> 2x)
+		},
+		// Filtro de volumen bajo
+		volume: {
+			lookback: 10,
+			minAvg: 50,          // Valor inicial de arranque (se recalibra con EMA dinámica)
+			volumeEmaRatio: 0.50 // Umbral = 50% del volumen típico aprendido
+		},
+		// Latigazo: umbral relativo al rango promedio de las últimas velas
+		whiplash: {
+			minRangeRatio: 0.30,  // El movimiento de fase3 debe ser >= 30% del rango promedio de vela
+			minVelocity: 0.000010 // Velocidad mínima absoluta
 		},
 		dangerousMarkets: {
 			// Mercado "Sucio": velas con mechas en AMBOS lados de forma consistente

@@ -60,6 +60,11 @@ async function executeOperation(API, decision) {
 
 		addOperation(operation)
 
+		// Registrar resultado real para gestión dinámica de confianza en strategy-core
+		global._botRealResults = global._botRealResults || []
+		global._botRealResults.push({ win: order.quote.win, ts: Date.now() })
+		if (global._botRealResults.length > 20) global._botRealResults = global._botRealResults.slice(-20)
+
 		return {
 			executed: true,
 			operation

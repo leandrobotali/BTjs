@@ -10,7 +10,7 @@
  */
 function isDoubleTop(candles, lookback = 8, tolerance = 0.00005) {
     if (!candles || candles.length < lookback) return false;
-    const highs = candles.slice(-lookback).map(c => c.high);
+    const highs = candles.slice(-lookback).map(c => c.max);
     const max1 = Math.max(...highs);
     const idx1 = highs.lastIndexOf(max1);
     // Buscar segundo máximo separado al menos 2 velas
@@ -31,7 +31,7 @@ function isDoubleTop(candles, lookback = 8, tolerance = 0.00005) {
  */
 function isDoubleBottom(candles, lookback = 8, tolerance = 0.00005) {
     if (!candles || candles.length < lookback) return false;
-    const lows = candles.slice(-lookback).map(c => c.low);
+    const lows = candles.slice(-lookback).map(c => c.min);
     const min1 = Math.min(...lows);
     const idx1 = lows.lastIndexOf(min1);
     let min2 = Infinity, idx2 = -1;

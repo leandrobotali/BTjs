@@ -164,28 +164,32 @@ const checkImmediateRetest = (decision, candles, levels, closePrice) => {
     const recentCandles = candles.slice(-cfg.lookback)
 
     let touchCount = 0
-    let consecutive = false // ¿Tocó el nivel sin velas de "aire" en el medio?
-    let consecBreak = false // Hubo al menos una vela de respiro
+    let lastTouchIdx = -1
+    let hadBreak = false
 
     for (let i = 0; i < recentCandles.length; i++) {
         const c = recentCandles[i]
-        const high = c.max
-        const low = c.min
-
         const touchedLevel =
-            high >= nearestLevel.price - proximityThreshold &&
-            low <= nearestLevel.price + proximityThreshold
+            c.max >= nearestLevel.price - proximityThreshold &&
+            c.min <= nearestLevel.price + proximityThreshold
 
         if (touchedLevel) {
-            touchCount++
-        } else if (touchCount > 0) {
-            // Hubo una vela que NO tocó el nivel → es respiro
-            consecBreak = true
+            // Si hubo un respiro antes de este toque, reiniciar conteo
+            if (hadBreak) {
+                touchCount = 1
+                hadBreak = false
+            } else {
+                touchCount++
+            }
+            lastTouchIdx = i
+        } else if (lastTouchIdx !== -1) {
+            // Vela que NO toca el nivel = respiro
+            hadBreak = true
         }
     }
 
-    // Peligro: Insistencia (múltiples toques sin respiro suficiente)
-    if (touchCount >= cfg.maxTouchesWithoutBreak && !consecBreak) {
+    // Peligro: Últimos toques son consecutivos (sin respiro al final)
+    if (touchCount >= cfg.maxTouchesWithoutBreak && !hadBreak) {
         const levelDir = nearestLevel.type === 'SUPPORT' ? 'soporte' : 'resistencia'
         return `RETEST_BLOCK: El precio tocó el ${levelDir} @ ${nearestLevel.price.toFixed(6)} ${touchCount} veces consecutivas. Alta probabilidad de ruptura, no operar rebote.`
     }

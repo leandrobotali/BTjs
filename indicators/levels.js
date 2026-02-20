@@ -16,6 +16,56 @@
  */
 
 const config = require('../config.js')
+const { calculateEMA } = require('./moving-averages.js')
+
+// ============================================================
+// EMAs COMO SOPORTE/RESISTENCIA DINÁMICO
+// ============================================================
+
+/**
+ * Genera zonas de S/R dinámico basadas en EMA 20, 50 y 200.
+ * Según CONCEPTOS_BASICOS.md: las EMAs actúan como soporte/resistencia móvil.
+ * La confluencia EMA + nivel horizontal es señal de alta probabilidad.
+ * @param {Array} candles
+ * @returns {Array} zonas EMA
+ */
+function detectEMAZones(candles) {
+    const zones = []
+    const tolerance = 0.000050 // ±5 pips
+    const periods = [
+        { period: 20, quality: 'MEDIUM' },
+        { period: 50, quality: 'MEDIUM' },
+        { period: 200, quality: 'STRONG' }
+    ]
+
+    for (const { period, quality } of periods) {
+        const ema = calculateEMA(candles, period)
+        if (ema === null) continue
+
+        const lastClose = candles[candles.length - 1].close
+        // Determinar si actúa como soporte o resistencia según posición del precio
+        const type = lastClose >= ema ? 'SUPPORT' : 'RESISTANCE'
+
+        zones.push({
+            price: ema,
+            zoneTop: ema + tolerance,
+            zoneBottom: ema - tolerance,
+            type,
+            quality,
+            isEMA: true,
+            emaPeriod: period,
+            candleIndex: 0,
+            age: 0,
+            rejections: 1,
+            touches: 1,
+            magnitude: 0,
+            isWorn: false,
+            isFlipped: false
+        })
+    }
+
+    return zones
+}
 
 // ============================================================
 // DETECCIÓN DE ZONAS (reversa confirmada de 2+ velas)
@@ -429,6 +479,8 @@ function mergeZoneCluster(cluster) {
     }
 
     const isWorn = totalTouches >= cfg.wornTouches
+    const isEMA = cluster.some(z => z.isEMA)
+    const emaPeriod = isEMA ? cluster.find(z => z.isEMA)?.emaPeriod : undefined
 
     return {
         price: avgPrice,
@@ -443,6 +495,8 @@ function mergeZoneCluster(cluster) {
         isWorn: isWorn,
         isFlipped: hasFlip,
         roundLevel: roundLevel,
+        isEMA: isEMA,
+        emaPeriod: emaPeriod,
         clusterSize: cluster.length,
         age: Math.min(...cluster.map(z => z.age || 0))
     }
@@ -480,14 +534,23 @@ function getLevels(candles) {
     // 5. Agregar números redondos como zonas especiales (con jerarquía)
     const roundZones = detectRoundNumberZones(candles)
 
-    // 6. Combinar todo y re-evaluar fuerza de round zones
-    const allZones = [...activeZones, ...roundZones.map(rz => evaluateZoneStrength(rz, candles))]
+    // 6. Agregar EMAs como S/R dinámico
+    const emaZones = detectEMAZones(candles)
+
+    // 7. Combinar todo y re-evaluar fuerza de round zones y EMA zones
+    const allZones = [
+        ...activeZones,
+        ...roundZones.map(rz => evaluateZoneStrength(rz, candles)),
+        ...emaZones.map(ez => evaluateZoneStrength(ez, candles))
+    ]
 
     // 7. Clustering: unir zonas cercanas
     const clustered = clusterZones(allZones)
 
     // 8. Filtro de recencia: deprioritizar zonas viejas (>maxAge velas)
+    // Las zonas EMA nunca envejecen (son dinámicas)
     const withRecency = clustered.map(z => {
+        if (z.isEMA) return { ...z, agedOut: false }
         if (z.age > cfg.maxAge && z.type !== 'KEY_ZONE' && z.type !== 'ROUND_NUMBER') {
             // Demote quality by one tier (STRONG → MEDIUM, MEDIUM → WEAK)
             let adjustedQuality = z.quality
@@ -640,28 +703,15 @@ function getTargetZone(currentPrice, direction, levels) {
 
     const cfg = config.strategy.levels
 
-    // Tipos de nivel que actúan como bloqueantes según la dirección
-    const blockingTypes = direction === 'CALL'
-        ? ['RESISTANCE', 'KEY_ZONE', 'ROUND_NUMBER']  // para CALL: bloqueantes arriba
-        : ['SUPPORT', 'KEY_ZONE', 'ROUND_NUMBER']     // para PUT: bloqueantes abajo
-
-    // Buscar el nivel bloqueante más cercano en la dirección de la operación
     let targetLevel = null
     let minDistance = Infinity
 
     for (const level of levels) {
-        // Solo considerar niveles que actúen como bloqueantes
-        if (!blockingTypes.includes(level.type)) continue
+        if (level.quality === 'WEAK') continue
 
-        let distance
-
-        if (direction === 'CALL') {
-            // Para CALL: buscar nivel por ENCIMA
-            distance = level.price - currentPrice
-        } else {
-            // Para PUT: buscar nivel por DEBAJO
-            distance = currentPrice - level.price
-        }
+        const distance = direction === 'CALL'
+            ? level.price - currentPrice
+            : currentPrice - level.price
 
         if (distance > 0 && distance < minDistance) {
             minDistance = distance
@@ -673,7 +723,6 @@ function getTargetZone(currentPrice, direction, levels) {
         return { hasTarget: false, target: null, distancePips: 0, hasSpace: true }
     }
 
-    // ¿Hay espacio suficiente? (al menos N pips = minTargetDistance)
     const hasSpace = minDistance >= cfg.minTargetDistance
 
     return {
