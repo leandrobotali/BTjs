@@ -72,7 +72,7 @@ function addNewCandle(candle) {
 		// Actualizar EMA de volumen con la vela nueva
 		updateVolumeEMA(lastStatusCandle.volume)
 		lastStatusCandle = {}
-		console.log('[CANDLES] Nueva vela agregada:', newCandle)
+		console.log(`[CANDLES] Nueva vela agregada: ${newCandle.open} -> ${newCandle.close} -> ${newCandle.direction}`)
 
 		// Mantener solo las últimas cantCandles
 		if (candles.length > parseInt(config.cantCandles)) {

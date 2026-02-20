@@ -48,7 +48,7 @@ async function handleNewCandle(API, candle) {
 			/* si se agrego una nueva vela, procesamos la operación */
 			// console.log('candleee : ', candle);
 
-			console.log(`\n[CANDLE] Nueva vela: ${candle.id} | ${candle.open} -> ${candle.close}`)
+			// console.log(`\n[CANDLE] Nueva vela: ${candle.id} | ${candle.open} -> ${candle.close}`)
 			console.log('[STRATEGY] Calculando niveles S/R...')
 
 
