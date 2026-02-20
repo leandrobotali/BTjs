@@ -42,7 +42,7 @@ module.exports = {
 		volume: {
 			lookback: 10,
 			minAvg: 300,          // Valor inicial de arranque (se recalibra con EMA dinámica)
-			volumeEmaRatio: 0.50 // Umbral = 50% del volumen típico aprendido
+			volumeEmaRatio: 0.60 // Umbral = 50% del volumen típico aprendido
 		},
 		// Latigazo: umbral relativo al rango promedio de las últimas velas
 		whiplash: {

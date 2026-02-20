@@ -13,7 +13,6 @@ const VOLUME_EMA_K = 2 / (VOLUME_EMA_PERIOD + 1)
 const VOLUME_EMA_MIN_ACTIVE = 10 // Mínimo de ticks para considerar vela "activa" (proxy de volumen)
 const candleMutex = new SimpleMutex()
 const candleMutexTick = new SimpleMutex()
-const candleMutexSave = new SimpleMutex()
 
 async function loadInitialCandles(API, active) {
 	try {
