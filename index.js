@@ -1,6 +1,6 @@
 const config = require('./config.js')
 const { loadActiveSchedule } = require('./core/active.js')
-const { loadInitialCandles, addNewCandle, getCandles, addNewTick, clearTicks, getTicks, setCachedLevels } = require('./core/candles.js')
+const { loadInitialCandles, addNewCandle, getCandles, addNewTick, clearTicks, getTicks, setCachedLevels, setLastVolume } = require('./core/candles.js')
 const { getLevels } = require('./indicators/levels.js')
 const { analyzeStrategy } = require('./strategy/strategy-core.js')
 const { executeOperation, isOperating } = require('./operations/trade.js')
@@ -34,6 +34,7 @@ async function handleNewCandle(API, candle) {
 		return
 	}
 
+	let newCandle = false
 	try {
 		// checkAndSaveHourly() - Deprecated: Se guarda por operación en tiempo real
 		console.log(candle);
@@ -42,7 +43,9 @@ async function handleNewCandle(API, candle) {
 		if (!added) {
 			/* si no se agrego una nueva vela, almacenamos el tick en el array  */
 			addNewTick(candle.close)
+			setLastVolume(candle.volume) // guardar volumen del ultimo tick de la vela en curso
 		} else {
+			newCandle = true
 			/* si se agrego una nueva vela, procesamos la operación */
 			// console.log('candleee : ', candle);
 
@@ -87,7 +90,7 @@ async function handleNewCandle(API, candle) {
 		console.error('[ERROR] Error procesando vela:', err.message)
 		console.error('[ERROR] Stack:', err.stack)
 	} finally {
-		clearTicks()
+		if (newCandle) clearTicks()
 		callbackMutex.unlock()
 	}
 }

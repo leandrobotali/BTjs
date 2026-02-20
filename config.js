@@ -41,7 +41,7 @@ module.exports = {
 		// Filtro de volumen bajo
 		volume: {
 			lookback: 10,
-			minAvg: 30,          // Valor inicial de arranque (se recalibra con EMA dinámica)
+			minAvg: 300,          // Valor inicial de arranque (se recalibra con EMA dinámica)
 			volumeEmaRatio: 0.50 // Umbral = 50% del volumen típico aprendido
 		},
 		// Latigazo: umbral relativo al rango promedio de las últimas velas
