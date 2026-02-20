@@ -4,14 +4,16 @@ const SimpleMutex = require('./mutex.js')
 let candles = []
 let ticks = []
 let lastCandleId = null
+let lastSaveCandleId = null
 let cachedLevels = []  // Niveles de S/R cacheados — solo se recalculan en vela nueva
-let lastVolume = 0     // Volumen del último tick de la vela en curso (acumulado real)
+let lastStatusCandle = {}     // Volumen del último tick de la vela en curso (acumulado real)
 let volumeEMA = null   // EMA de volumen de velas activas (se actualiza con cada vela nueva)
 const VOLUME_EMA_PERIOD = 50
 const VOLUME_EMA_K = 2 / (VOLUME_EMA_PERIOD + 1)
 const VOLUME_EMA_MIN_ACTIVE = 10 // Mínimo de ticks para considerar vela "activa" (proxy de volumen)
 const candleMutex = new SimpleMutex()
 const candleMutexTick = new SimpleMutex()
+const candleMutexSave = new SimpleMutex()
 
 async function loadInitialCandles(API, active) {
 	try {
@@ -62,16 +64,16 @@ function addNewCandle(candle) {
 		lastCandleId = candle.id
 
 		const newCandle = {
-			...candle,
-			volume: lastVolume, // volumen acumulado real de la vela cerrada
-			direction: candle.open < candle.close ? 'ALCISTA' : (candle.open > candle.close ? 'BAJISTA' : 'NONE')
+			...lastStatusCandle,
+			direction: lastStatusCandle.open < lastStatusCandle.close ? 'ALCISTA' : (lastStatusCandle.open > lastStatusCandle.close ? 'BAJISTA' : 'NONE')
 		}
 
 		candles.push(newCandle)
 
 		// Actualizar EMA de volumen con la vela nueva
-		updateVolumeEMA(lastVolume)
-		lastVolume = 0
+		updateVolumeEMA(lastStatusCandle.volume)
+		lastStatusCandle = {}
+		console.log('[CANDLES] Nueva vela agregada:', newCandle)
 
 		// Mantener solo las últimas cantCandles
 		if (candles.length > parseInt(config.cantCandles)) {
@@ -108,8 +110,8 @@ function addNewTick(tick) {
 	}
 }
 
-function setLastVolume(volume) {
-	if (volume) lastVolume = volume
+function setLastStatusCandle(candle) {
+	if (candle) lastStatusCandle = candle
 }
 
 function clearTicks() {
@@ -157,7 +159,7 @@ module.exports = {
 	getTicks,
 	getCachedLevels,
 	setCachedLevels,
-	setLastVolume,
+	setLastStatusCandle,
 	updateVolumeEMA,
 	getVolumeEMA
 }
