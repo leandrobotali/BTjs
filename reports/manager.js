@@ -5,28 +5,47 @@ const config = require('../config')
 // Archivo donde se guardarán los logs detallados (JSON Lines)
 const archive_name = `operations_${config.version}.json`
 const LOG_FILE = path.join(__dirname, '../', archive_name)
+const SKIPPED_FILE = path.join(__dirname, '../', `skipped_${config.version}.json`)
 
 async function addOperation(operation) {
-	// Procesamiento asíncrono para no bloquear el worker principal
-	// No usamos await aquí para retornar control rápido, pero gestionamos errores en la promesa
 	saveOperationToFile(operation).catch(err => {
 		console.error('[REPORTS] Error guardando operación en disco:', err)
 	})
 }
 
+async function addSkipped(decision) {
+	saveSkippedToFile(decision).catch(err => {
+		console.error('[REPORTS] Error guardando vela saltada en disco:', err)
+	})
+}
+
 async function saveOperationToFile(operation) {
 	try {
-		const timestamp = new Date().toISOString()
-		const logEntry = JSON.stringify({
-			...operation,
-			savedAt: timestamp
-		}) + '\n' // JSONL format (one JSON per line)
-
+		const logEntry = JSON.stringify({ ...operation, savedAt: new Date().toISOString() }) + '\n'
 		await fs.appendFile(LOG_FILE, logEntry, 'utf8')
-
-		console.log(`[REPORTS] Operación guardada exitosamente en ${path.basename(LOG_FILE)}`)
+		console.log(`[REPORTS] Operación guardada en ${path.basename(LOG_FILE)}`)
 	} catch (err) {
-		console.error('[REPORTS] Fallo crítico al escribir archivo de logs:', err.message)
+		console.error('[REPORTS] Fallo crítico al escribir operación:', err.message)
+	}
+}
+
+async function saveSkippedToFile(decision) {
+	try {
+		const entry = {
+			type: 'SKIPPED',
+			timestamp: new Date().toISOString(),
+			direction: decision.direction || '',
+			reason: decision.reason || 'Sin señal clara',
+			confidence: decision.confidence || 0,
+			analysis: decision.analysis,
+			ticks: decision.ticks,
+			candles: decision.candles,
+			indicators: decision.indicators,
+			savedAt: new Date().toISOString()
+		}
+		await fs.appendFile(SKIPPED_FILE, JSON.stringify(entry) + '\n', 'utf8')
+	} catch (err) {
+		console.error('[REPORTS] Fallo al escribir vela saltada:', err.message)
 	}
 }
 
@@ -46,6 +65,7 @@ function getOperationsBuffer() {
 
 module.exports = {
 	addOperation,
+	addSkipped,
 	checkAndSaveHourly,
 	saveHourlyReport,
 	getOperationsBuffer

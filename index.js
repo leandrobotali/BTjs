@@ -4,7 +4,7 @@ const { loadInitialCandles, addNewCandle, getCandles, addNewTick, clearTicks, ge
 const { getLevels } = require('./indicators/levels.js')
 const { analyzeStrategy } = require('./strategy/strategy-core.js')
 const { executeOperation, isOperating } = require('./operations/trade.js')
-const { addOperation, checkAndSaveHourly } = require('./reports/manager.js')
+const { addOperation, checkAndSaveHourly, addSkipped } = require('./reports/manager.js')
 const SimpleMutex = require('./core/mutex.js')
 const { checkActiveBeforeOperation } = require('./core/active.js')
 
@@ -63,8 +63,6 @@ async function handleNewCandle(API, candle) {
 				analysis: decision.analysis
 			})
 
-			clearTicks()
-
 			if (isOperating()) {
 				console.log('[OPERATION] Operación en curso, no se ejecuta nueva operación')
 				return
@@ -81,12 +79,14 @@ async function handleNewCandle(API, candle) {
 				executeOperation(API, decision)
 			} else {
 				console.log('[DECISION] No se opera en esta vela')
+				addSkipped(decision)
 			}
 		}
 	} catch (err) {
 		console.error('[ERROR] Error procesando vela:', err.message)
 		console.error('[ERROR] Stack:', err.stack)
 	} finally {
+		clearTicks()
 		callbackMutex.unlock()
 	}
 }
