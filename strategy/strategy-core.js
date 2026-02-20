@@ -1,7 +1,9 @@
+const { isDoubleTop, isDoubleBottom, countSameColor } = require('../indicators/patterns-advanced.js')
 const config = require('../config.js')
 const { checkLevelProximity, getTargetZone } = require('../indicators/levels.js')
 const { getTrend } = require('../indicators/trend.js')
 const { detectPatterns } = require('../indicators/patterns.js')
+const { detectCandlePatterns } = require('../indicators/candle-patterns.js')
 const { detectDangerousMarket } = require('../indicators/dangerous-markets.js')
 const { detectCandleSequence } = require('../indicators/sequences.js')
 const { checkMarketContext } = require('../indicators/market-context.js')
@@ -100,13 +102,42 @@ const analyzeTickSequence = (sequence, phaseName, logger) => {
 /**
  * Función principal de estrategia
  */
+
 const analyzeStrategy = async (candles, ticks, levels = []) => {
 	const logger = new AnalysisLogger()
+	// PATRONES AVANZADOS
+	const doubleTop = isDoubleTop(candles)
+	const doubleBottom = isDoubleBottom(candles)
+	const sameColorSeq = countSameColor(candles)
+
+	if (doubleTop) logger.add('🔺 Doble Techo detectado en el historial reciente')
+	if (doubleBottom) logger.add('🔻 Doble Suelo detectado en el historial reciente')
+	if (sameColorSeq) logger.add(`⏳ Secuencia de velas: ${sameColorSeq}`)
 	logger.add(`╔═══════════════════════════════════════════════════════════════╗`)
 	logger.add(`║ ANÁLISIS COMPLETO - ${new Date().toISOString()}`)
 	logger.add(`╚═══════════════════════════════════════════════════════════════╝`)
 	logger.add(``)
 	logger.add(`[DATA] ${ticks.length} ticks | ${candles.length} velas históricas`)
+
+	// === FILTRO DE VOLUMEN BAJO ===
+	// Considerar las últimas N velas (ejemplo: 10)
+	const VOLUME_LOOKBACK = 10;
+	const MIN_AVG_VOLUME = 100; // Ajustar según el activo
+	if (candles.length >= VOLUME_LOOKBACK) {
+		const recentVolumes = candles.slice(-VOLUME_LOOKBACK).map(c => c.volume || 0);
+		const avgVolume = recentVolumes.reduce((a, b) => a + b, 0) / VOLUME_LOOKBACK;
+		logger.add(`[VOLUMEN] Promedio últimas ${VOLUME_LOOKBACK} velas: ${avgVolume.toFixed(2)}`);
+		if (avgVolume < MIN_AVG_VOLUME) {
+			logger.add(`[ABORT] Volumen bajo (${avgVolume.toFixed(2)} < ${MIN_AVG_VOLUME}) - Mercado sin interés real. No operar.`);
+			return {
+				shouldOperate: false,
+				direction: '',
+				reason: 'Volumen bajo',
+				analysis: logger.getReport(),
+				candles: candles.slice(-20)
+			}
+		}
+	}
 
 	// 1. Validación de Datos Mínimos
 	if (ticks.length < config.strategy.minTicks) {
@@ -155,11 +186,14 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 	logger.add(`─────────────────────────────────────────────────────────────`)
 	logger.add(`Vela Actual: ${candleColor} (${openPrice.toFixed(6)} → ${closePrice.toFixed(6)})`)
 
+
+
 	// 2. Análisis de Contexto (Velas Cerradas)
 	const trendInfo = getTrend(candles)
 	const trend = trendInfo.direction  // mantener compatibilidad con logging existente
 	// levels viene pre-calculado desde index.js (una sola vez por vela nueva)
 	const patterns = detectPatterns(candles)
+	const candlePatterns = detectCandlePatterns(candles)
 
 	logger.add(`Tendencia: ${trendInfo.direction} (${trendInfo.strength})`)
 	logger.add(`Niveles Detectados: ${levels.length}`)
@@ -172,6 +206,29 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 	if (patterns.length > 0) {
 		logger.add(`Patrones: ${patterns.map(p => p.name + '→' + p.prediction).join(', ')}`)
 	}
+	if (candlePatterns.length > 0) {
+		logger.add(`Patrones de vela: ${candlePatterns.join(', ')}`)
+	}
+
+	// === ANÁLISIS DE MECHAS EXTREMAS ===
+	// Penalizar si la vela actual o las últimas N tienen mechas largas respecto al cuerpo
+	const MECHA_LOOKBACK = 3;
+	const MECHA_RATIO_UMBRAL = 2.5; // Mecha > 2.5x cuerpo
+	let mechaExtremaDetectada = false;
+	if (candles.length >= MECHA_LOOKBACK) {
+		const recentCandles = candles.slice(-MECHA_LOOKBACK);
+		for (const c of recentCandles) {
+			const cuerpo = Math.abs(c.close - c.open);
+			const mechaSup = c.max - Math.max(c.close, c.open);
+			const mechaInf = Math.min(c.close, c.open) - c.min;
+			const mechaMax = Math.max(mechaSup, mechaInf);
+			if (cuerpo > 0 && (mechaSup / cuerpo > MECHA_RATIO_UMBRAL || mechaInf / cuerpo > MECHA_RATIO_UMBRAL)) {
+				mechaExtremaDetectada = true;
+				logger.add(`[MECHA] Vela con mecha extrema detectada (mecha/cuerpo > ${MECHA_RATIO_UMBRAL})`);
+			}
+		}
+	}
+
 
 	// ==========================================
 	// 3. ANÁLISIS DE TICKS (LMTA - 3 FASES)
@@ -320,6 +377,150 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 	let confidence = 0
 	let reason = ''
 
+
+	// FILTRO Y REFUERZO SEGÚN PATRONES DE VELA Y AVANZADOS
+	// 1. DOJI: indecisión, cancelar operación
+	if (candlePatterns.includes('DOJI')) {
+		logger.add('⚠️ DOJI detectado: indecisión, se cancela la operación')
+		return {
+			shouldOperate: false,
+			direction: '',
+			reason: 'Doji detectado (indecisión)',
+			analysis: logger.getReport(),
+			candles: candles.slice(-20)
+		}
+	}
+	// DOBLE TECHO: refuerza venta si la señal es PUT
+	if (doubleTop && decision === 'PUT') {
+		confidence += 15
+		logger.add('🔺 Doble Techo: refuerza venta (+15% confianza)')
+	}
+	// DOBLE SUELO: refuerza compra si la señal es CALL
+	if (doubleBottom && decision === 'CALL') {
+		confidence += 15
+		logger.add('🔻 Doble Suelo: refuerza compra (+15% confianza)')
+	}
+
+	// Secuencia de velas del mismo color: penaliza si es demasiado larga (agotamiento)
+	const maxSeq = 4; // penalizar si hay 5 o más velas del mismo color
+	let bullishSeq = 0, bearishSeq = 0;
+	for (let i = candles.length - 1; i >= 0 && i >= candles.length - 10; i--) {
+		if (candles[i].close > candles[i].open) {
+			if (bearishSeq === 0) bullishSeq++;
+			else break;
+		} else if (candles[i].close < candles[i].open) {
+			if (bullishSeq === 0) bearishSeq++;
+			else break;
+		} else break;
+	}
+	if (bullishSeq >= maxSeq) {
+		confidence -= 15;
+		logger.add(`⚠️ Secuencia alcista de ${bullishSeq} velas: penaliza compra (-15% confianza) por posible agotamiento`);
+	} else if (bearishSeq >= maxSeq) {
+		confidence -= 15;
+		logger.add(`⚠️ Secuencia bajista de ${bearishSeq} velas: penaliza venta (-15% confianza) por posible agotamiento`);
+	} else if (sameColorSeq === 'BULLISH' && decision === 'CALL') {
+		confidence += 5;
+		logger.add('⏳ Secuencia alcista: refuerza compra (+5% confianza)');
+	} else if (sameColorSeq === 'BEARISH' && decision === 'PUT') {
+		confidence += 5;
+		logger.add('⏳ Secuencia bajista: refuerza venta (+5% confianza)');
+	}
+
+	// LÓGICA DE MEJOR PUNTO DE ENTRADA (hasta el segundo 25)
+	// Si se detecta doble techo/suelo o secuencia larga, buscar mejor punto de entrada
+	let buscarMejorEntrada = false;
+	let motivoMejorEntrada = '';
+	if ((doubleTop && decision === 'PUT')) {
+		buscarMejorEntrada = true;
+		motivoMejorEntrada = 'doble techo';
+	} else if ((doubleBottom && decision === 'CALL')) {
+		buscarMejorEntrada = true;
+		motivoMejorEntrada = 'doble suelo';
+	} else if (bullishSeq >= maxSeq && decision === 'PUT') {
+		buscarMejorEntrada = true;
+		motivoMejorEntrada = 'agotamiento alcista';
+	} else if (bearishSeq >= maxSeq && decision === 'CALL') {
+		buscarMejorEntrada = true;
+		motivoMejorEntrada = 'agotamiento bajista';
+	}
+	if (buscarMejorEntrada) {
+		logger.add(`⏳ Buscar mejor punto de entrada hasta el segundo 25 por ${motivoMejorEntrada}`);
+	}
+	// 2. HAMMER: refuerza compra si la señal es CALL
+	if (candlePatterns.includes('HAMMER') && decision === 'CALL') {
+		confidence += 10
+		logger.add('🔨 HAMMER detectado: refuerza compra (+10% confianza)')
+	}
+	// 3. INVERTED_HAMMER: refuerza venta si la señal es PUT
+	if (candlePatterns.includes('INVERTED_HAMMER') && decision === 'PUT') {
+		confidence += 10
+		logger.add('🔨 INVERTED HAMMER detectado: refuerza venta (+10% confianza)')
+	}
+	// 4. PIN BAR: refuerza la dirección opuesta a la mecha dominante
+	if (candlePatterns.includes('PIN_BAR')) {
+		// Si la señal es CALL y la vela es pin bar alcista, refuerza
+		if (decision === 'CALL') {
+			confidence += 10
+			logger.add('📍 PIN BAR alcista detectado: refuerza compra (+10% confianza)')
+		} else if (decision === 'PUT') {
+			confidence += 10
+			logger.add('📍 PIN BAR bajista detectado: refuerza venta (+10% confianza)')
+		}
+	}
+	// 5. ENGULFING: refuerza la dirección del patrón
+	if (candlePatterns.includes('ENGULFING')) {
+		// Si la señal es CALL y el patrón es envolvente alcista, refuerza
+		if (decision === 'CALL') {
+			confidence += 15
+			logger.add('🟩 ENGULFING alcista detectado: refuerza compra (+15% confianza)')
+		} else if (decision === 'PUT') {
+			confidence += 15
+			logger.add('🟥 ENGULFING bajista detectado: refuerza venta (+15% confianza)')
+		}
+	}
+	// 6. MARUBOZU: refuerza la dirección de la vela
+	if (candlePatterns.includes('MARUBOZU')) {
+		if (decision === 'CALL' && closePrice > openPrice) {
+			confidence += 10
+			logger.add('⬆️ MARUBOZU alcista detectado: refuerza compra (+10% confianza)')
+		} else if (decision === 'PUT' && closePrice < openPrice) {
+			confidence += 10
+			logger.add('⬇️ MARUBOZU bajista detectado: refuerza venta (+10% confianza)')
+		}
+	}
+
+	// Penalización por mechas extremas
+	if (mechaExtremaDetectada) {
+		confidence = Math.max(0, confidence - 20);
+		logger.add('⚠️ Penalización: Mechas extremas recientes (-20% confianza)');
+	}
+	// === SECUENCIAS DE FALSOS QUIEBRES ===
+	// Detectar si hubo varios intentos fallidos de romper un nivel
+	// Simplificado: contar cuántas veces el precio tocó un nivel fuerte sin romperlo en las últimas N velas
+	const FALSO_QUIEBRE_LOOKBACK = 10;
+	const FALSO_QUIEBRE_MIN = 2;
+	let falsoQuiebreDireccion = null;
+	if (levels && levels.length > 0 && candles.length >= FALSO_QUIEBRE_LOOKBACK) {
+		const recentCandles = candles.slice(-FALSO_QUIEBRE_LOOKBACK);
+		for (const lvl of levels) {
+			if (lvl.quality === 'STRONG') {
+				let toquesArriba = 0, toquesAbajo = 0;
+				for (const c of recentCandles) {
+					if (Math.abs(c.max - lvl.price) < 0.00005) toquesArriba++;
+					if (Math.abs(c.min - lvl.price) < 0.00005) toquesAbajo++;
+				}
+				if (toquesArriba >= FALSO_QUIEBRE_MIN) falsoQuiebreDireccion = 'RESISTENCIA';
+				if (toquesAbajo >= FALSO_QUIEBRE_MIN) falsoQuiebreDireccion = 'SOPORTE';
+			}
+		}
+	}
+
+	// Si la señal va en contra de los falsos quiebres, aumentar confianza
+	if (falsoQuiebreDireccion && ((falsoQuiebreDireccion === 'RESISTENCIA' && decision === 'PUT') || (falsoQuiebreDireccion === 'SOPORTE' && decision === 'CALL'))) {
+		confidence += 15;
+		logger.add('🔄 Secuencia de falsos quiebres detectada: aumenta confianza (+15%)');
+	}
 	// JERARQUÍA 1: Latigazo de Desesperación en Nivel (Máxima Prioridad)
 	if (whiplashType === 'DESESPERACION' && levelCheck.isAtLevel) {
 		logger.add(``)
@@ -458,9 +659,14 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 			logger.add(`Objetivo: ${targetZoneInfo.description}`)
 			if (targetZoneInfo.hasSpace) {
 				logger.add(`✓ Espacio suficiente hasta el objetivo (${targetZoneInfo.distancePips.toFixed(6)} pips)`)
+				// Penalización adicional si el objetivo está cerca de un nivel fuerte
+				const STRONG_LEVEL_DISTANCE = 0.00020; // 20 pips, ajustar según activo
+				if (targetZoneInfo.closestStrongLevel && targetZoneInfo.closestStrongLevel.distance < STRONG_LEVEL_DISTANCE) {
+					confidence = Math.max(0, confidence - 20);
+					logger.add(`⚠️ Target muy cerca de nivel fuerte (${targetZoneInfo.closestStrongLevel.distance.toFixed(6)} pips). -20% confianza`);
+				}
 			} else {
 				logger.add(`⚠️ Objetivo demasiado cercano (${targetZoneInfo.distancePips.toFixed(6)} pips). El precio puede rebotar antes.`)
-				// No cancela la operación, pero baja la confianza
 				confidence = Math.max(0, confidence - 15)
 				logger.add(`   -15% confianza por objetivo cercano`)
 			}
@@ -535,6 +741,33 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 						logger.add(`✗ Confianza insuficiente → CANCELADO`)
 					}
 				}
+			}
+		}
+	}
+
+	// === GESTIÓN DINÁMICA DE CONFIANZA ===
+	// Simulación: usar un array global global._botResults para score reciente
+	if (typeof global !== 'undefined') {
+		global._botResults = global._botResults || [];
+		// Guardar resultado actual si hay decisión
+		if (decision !== 'WAIT') {
+			global._botResults.push({
+				ts: Date.now(),
+				result: confidence >= 60 // éxito si confianza alta
+			});
+			// Limitar a las últimas 20 operaciones
+			if (global._botResults.length > 20) global._botResults = global._botResults.slice(-20);
+		}
+		// Calcular score de las últimas N
+		const recent = global._botResults.slice(-10);
+		const score = recent.filter(r => r.result).length / (recent.length || 1);
+		if (recent.length >= 5) {
+			if (score > 0.7) {
+				confidence += 10;
+				logger.add('📈 Score reciente alto: +10% confianza');
+			} else if (score < 0.4) {
+				confidence = Math.max(0, confidence - 10);
+				logger.add('📉 Score reciente bajo: -10% confianza');
 			}
 		}
 	}
