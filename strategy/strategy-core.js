@@ -1,7 +1,10 @@
 const config = require('../config.js')
-const { getLevels, checkLevelProximity } = require('../indicators/levels.js')
+const { checkLevelProximity, getTargetZone } = require('../indicators/levels.js')
 const { getTrend } = require('../indicators/trend.js')
 const { detectPatterns } = require('../indicators/patterns.js')
+const { detectDangerousMarket } = require('../indicators/dangerous-markets.js')
+const { detectCandleSequence } = require('../indicators/sequences.js')
+const { checkMarketContext } = require('../indicators/market-context.js')
 
 // Helper para logging detallado
 class AnalysisLogger {
@@ -19,231 +22,559 @@ class AnalysisLogger {
 }
 
 /**
+ * Analiza una secuencia de ticks para detectar características clave
+ */
+const analyzeTickSequence = (sequence, phaseName, logger) => {
+	let stagnationCount = 0
+	let maxStagnation = 0
+	let movements = []
+	let prices = []
+
+	// Calcular movimientos
+	for (let i = 1; i < sequence.length; i++) {
+		const diff = sequence[i] - sequence[i - 1]
+		const absDiff = Math.abs(diff)
+
+		// Detección de estancamiento
+		if (absDiff < config.strategy.stagnation.priceThreshold) {
+			stagnationCount++
+		} else {
+			maxStagnation = Math.max(maxStagnation, stagnationCount)
+			stagnationCount = 0
+		}
+
+		movements.push(diff)
+		prices.push(sequence[i])
+	}
+
+	// Evaluar Naturalidad (Simetría)
+	let irregularMovements = 0
+	for (let i = 1; i < movements.length; i++) {
+		const prev = Math.abs(movements[i - 1])
+		const curr = Math.abs(movements[i])
+
+		if (prev > 0.000001 && curr > prev * config.strategy.naturality.ratioThreshold) {
+			irregularMovements++
+			logger.add(`  [${phaseName}] Movimiento irregular: ${prev.toFixed(6)} → ${curr.toFixed(6)} (${(curr / prev).toFixed(1)}x)`)
+		}
+	}
+
+	// Calcular movimiento neto y velocidad (inclinación)
+	const netMovement = sequence[sequence.length - 1] - sequence[0]
+	const timeSpan = sequence.length
+	const velocity = Math.abs(netMovement) / timeSpan // pips por tick
+	const dominantGroup = netMovement > 0 ? 'COMPRADORES' : 'VENDEDORES'
+
+	// Detectar si hubo avance previo (para distinguir agotamiento de debilidad)
+	let hadProgress = false
+	let maxReached = sequence[0]
+	let minReached = sequence[0]
+
+	for (const price of sequence) {
+		if (netMovement > 0) {
+			// Alcista: verificar si hizo nuevos máximos
+			if (price > maxReached) {
+				maxReached = price
+				hadProgress = true
+			}
+		} else {
+			// Bajista: verificar si hizo nuevos mínimos
+			if (price < minReached) {
+				minReached = price
+				hadProgress = true
+			}
+		}
+	}
+
+	return {
+		dominantGroup,
+		netMovement,
+		velocity,
+		maxStagnation,
+		irregularMovements,
+		hadProgress,
+		isWeak: irregularMovements > 2 || velocity < 0.000003 // Débil si muy irregular o muy lento
+	}
+}
+
+/**
  * Función principal de estrategia
  */
-const analyzeStrategy = async (candles, ticks) => {
+const analyzeStrategy = async (candles, ticks, levels = []) => {
 	const logger = new AnalysisLogger()
-	logger.add(`[ANALYSIS] Iniciando análisis con ${ticks.length} ticks y ${candles.length} velas históricas.`)
+	logger.add(`╔═══════════════════════════════════════════════════════════════╗`)
+	logger.add(`║ ANÁLISIS COMPLETO - ${new Date().toISOString()}`)
+	logger.add(`╚═══════════════════════════════════════════════════════════════╝`)
+	logger.add(``)
+	logger.add(`[DATA] ${ticks.length} ticks | ${candles.length} velas históricas`)
 
 	// 1. Validación de Datos Mínimos
 	if (ticks.length < config.strategy.minTicks) {
-		logger.add(`[WARNING] Ticks insuficientes (${ticks.length} < ${config.strategy.minTicks}). No se opera.`)
-		return { shouldOperate: false, direction: '', reason: 'Datos insuficientes', analysis: logger.getReport() }
+		logger.add(`[ABORT] Ticks insuficientes (${ticks.length} < ${config.strategy.minTicks})`)
+		return {
+			shouldOperate: false,
+			direction: '',
+			reason: 'Datos insuficientes',
+			analysis: logger.getReport(),
+			candles: candles.slice(-20) // Últimas 20 velas para contexto
+		}
 	}
 
-	// Identificar vela actual (la última cerrada que estamos analizando)
-	// Ticks corresponden a esta vela recién cerrada.
-	// Necesitamos el precio de apertura para calcular colores y direcciones de ticks relativos?
-	// Asumiremos que ticks[0] es muy cercano a la apertura.
+	// ==========================================
+	// 0. FILTRO DE MERCADOS PELIGROSOS
+	// ==========================================
+	logger.add(``)
+	logger.add(`[STEP 1] FILTRO DE SEGURIDAD - Mercados Peligrosos`)
+	logger.add(`─────────────────────────────────────────────────────────────`)
 
+	const dangerCheck = detectDangerousMarket(candles, ticks)
+	if (dangerCheck.isDangerous) {
+		logger.add(`❌ MERCADO PELIGROSO: ${dangerCheck.reason}`)
+		dangerCheck.details.forEach(detail => logger.add(`   ${detail}`))
+		logger.add(``)
+		logger.add(`[DECISION] NO OPERAR - Condiciones inseguras`)
+
+		return {
+			shouldOperate: false,
+			direction: '',
+			reason: `Mercado Peligroso (${dangerCheck.reason})`,
+			analysis: logger.getReport(),
+			candles: candles.slice(-20)
+		}
+	} else {
+		logger.add(`✓ Mercado seguro - Continuar análisis`)
+	}
+
+	// Identificar vela actual
 	const openPrice = ticks[0]
 	const closePrice = ticks[ticks.length - 1]
 	const candleColor = closePrice > openPrice ? 'VERDE' : 'ROJA'
-	logger.add(`[CANDLE] Vela cerrada: ${candleColor} (Open: ${openPrice}, Close: ${closePrice})`)
+
+	logger.add(``)
+	logger.add(`[STEP 2] CONTEXTO DE MERCADO`)
+	logger.add(`─────────────────────────────────────────────────────────────`)
+	logger.add(`Vela Actual: ${candleColor} (${openPrice.toFixed(6)} → ${closePrice.toFixed(6)})`)
 
 	// 2. Análisis de Contexto (Velas Cerradas)
-	const trend = getTrend(candles)
-	const levels = getLevels(candles)
+	const trendInfo = getTrend(candles)
+	const trend = trendInfo.direction  // mantener compatibilidad con logging existente
+	// levels viene pre-calculado desde index.js (una sola vez por vela nueva)
 	const patterns = detectPatterns(candles)
 
-	logger.add(`[CONTEXT] Tendencia General: ${trend}`)
+	logger.add(`Tendencia: ${trendInfo.direction} (${trendInfo.strength})`)
+	logger.add(`Niveles Detectados: ${levels.length}`)
+	levels.forEach((level, idx) => {
+		const flip = level.isFlipped ? ' [FLIP]' : ''
+		const worn = level.isWorn ? ' [DESGASTADO]' : ''
+		logger.add(`  ${idx + 1}. ${level.type}${flip}${worn} @ ${level.price.toFixed(6)} (${level.quality}, ${level.rejections || level.touches} rechazos)`)
+	})
+
 	if (patterns.length > 0) {
-		logger.add(`[CONTEXT] Patrones detectados: ${patterns.map(p => p.name + '->' + p.prediction).join(', ')}`)
+		logger.add(`Patrones: ${patterns.map(p => p.name + '→' + p.prediction).join(', ')}`)
 	}
 
-	// 3. Análisis de Ticks (Micro-movimientos)
-	// Dividir en fases: Inicio (0-30s) y Fin (30-60s)
-	// Asumiendo ~1 tick por segundo, array index 0-29 y 30-end
+	// ==========================================
+	// 3. ANÁLISIS DE TICKS (LMTA - 3 FASES)
+	// ==========================================
+	logger.add(``)
+	logger.add(`[STEP 3] ANÁLISIS DE MICRO-MOVIMIENTOS (LMTA)`)
+	logger.add(`─────────────────────────────────────────────────────────────`)
 
-	const midPoint = Math.floor(ticks.length / 2)
-	const firstHalf = ticks.slice(0, midPoint)
-	const secondHalf = ticks.slice(midPoint)
+	// Dividir en 3 fases según INFO_ESTRATEGIA.md
+	const phase1End = Math.floor(ticks.length * 0.5) // Primeros 30s
+	const phase2Start = phase1End
+	const phase2End = ticks.length - 15 // Hasta 15s antes del final
+	const phase3Start = phase2End // Últimos 15s
 
-	// Función auxiliar para analizar una secuencia de ticks
-	const analyzeSequence = (sequence, phaseName) => {
-		let naturalityScore = 0 // Positivo: Natural, Negativo: Irregular
-		let stagnationCount = 0
-		let maxStagnation = 0
-		let dominantGroup = 'NEUTRAL' // BUYERS vs SELLERS
+	const phase1Ticks = ticks.slice(0, phase1End)
+	const phase2Ticks = ticks.slice(phase2Start, phase2End)
+	const phase3Ticks = ticks.slice(phase3Start)
 
-		let movements = []
-		for (let i = 1; i < sequence.length; i++) {
-			const diff = sequence[i] - sequence[i - 1]
-			const absDiff = Math.abs(diff)
+	logger.add(`Fase 1 (Inicio): ${phase1Ticks.length} ticks`)
+	logger.add(`Fase 2 (Medio): ${phase2Ticks.length} ticks`)
+	logger.add(`Fase 3 (Final 15s): ${phase3Ticks.length} ticks`)
+	logger.add(``)
 
-			// Detección de estancamiento
-			if (absDiff < config.strategy.stagnation.priceThreshold) {
-				stagnationCount++
-			} else {
-				maxStagnation = Math.max(maxStagnation, stagnationCount)
-				stagnationCount = 0
-			}
+	const phase1 = analyzeTickSequence(phase1Ticks, 'FASE_1', logger)
+	const phase2 = analyzeTickSequence(phase2Ticks, 'FASE_2', logger)
+	const phase3 = analyzeTickSequence(phase3Ticks, 'FASE_3', logger)
 
-			movements.push(diff)
-		}
+	logger.add(``)
+	logger.add(`📊 FASE 1 (Primeros 30s):`)
+	logger.add(`   Dominio: ${phase1.dominantGroup}`)
+	logger.add(`   Movimiento: ${phase1.netMovement.toFixed(6)} pips`)
+	logger.add(`   Velocidad: ${phase1.velocity.toFixed(6)} pips/tick`)
+	logger.add(`   Irregularidades: ${phase1.irregularMovements}`)
+	logger.add(`   Estancamiento Max: ${phase1.maxStagnation} ticks`)
+	logger.add(`   Tuvo Progreso: ${phase1.hadProgress ? 'SÍ' : 'NO'}`)
+	logger.add(`   Estado: ${phase1.isWeak ? '⚠️ DÉBIL' : '✓ FUERTE'}`)
 
-		// Evaluar Naturalidad (Simetría)
-		// Comparar saltos consecutivos. Si uno es > 2x el anterior (que no sea ruido), es irregular
-		let irregularMovements = 0
-		for (let i = 1; i < movements.length; i++) {
-			const prev = Math.abs(movements[i - 1])
-			const curr = Math.abs(movements[i])
+	logger.add(``)
+	logger.add(`📊 FASE 2 (Medio):`)
+	logger.add(`   Dominio: ${phase2.dominantGroup}`)
+	logger.add(`   Movimiento: ${phase2.netMovement.toFixed(6)} pips`)
+	logger.add(`   Velocidad: ${phase2.velocity.toFixed(6)} pips/tick`)
+	logger.add(`   Irregularidades: ${phase2.irregularMovements}`)
+	logger.add(`   Estancamiento Max: ${phase2.maxStagnation} ticks`)
+	logger.add(`   Tuvo Progreso: ${phase2.hadProgress ? 'SÍ' : 'NO'}`)
+	logger.add(`   Estado: ${phase2.isWeak ? '⚠️ DÉBIL' : '✓ FUERTE'}`)
 
-			if (prev > 0.000001 && curr > prev * config.strategy.naturality.ratioThreshold) {
-				irregularMovements++
-				logger.add(`[${phaseName}] Movimiento irregular detectado en tick ${i}: ${prev.toFixed(6)} -> ${curr.toFixed(6)}`)
-			}
-		}
+	logger.add(``)
+	logger.add(`📊 FASE 3 (Últimos 15s - CRÍTICO):`)
+	logger.add(`   Dominio: ${phase3.dominantGroup}`)
+	logger.add(`   Movimiento: ${phase3.netMovement.toFixed(6)} pips`)
+	logger.add(`   Velocidad: ${phase3.velocity.toFixed(6)} pips/tick`)
+	logger.add(`   Irregularidades: ${phase3.irregularMovements}`)
+	logger.add(`   Estancamiento Max: ${phase3.maxStagnation} ticks`)
+	logger.add(`   Tuvo Progreso: ${phase3.hadProgress ? 'SÍ' : 'NO'}`)
+	logger.add(`   Estado: ${phase3.isWeak ? '⚠️ DÉBIL' : '✓ FUERTE'}`)
 
-		const netMovement = sequence[sequence.length - 1] - sequence[0]
-		dominantGroup = netMovement > 0 ? 'COMPRADORES' : 'VENDEDORES'
+	// ==========================================
+	// 4. DETECCIÓN DE LATIGAZO (Clasificado)
+	// ==========================================
+	logger.add(``)
+	logger.add(`[STEP 4] DETECCIÓN DE LATIGAZO`)
+	logger.add(`─────────────────────────────────────────────────────────────`)
 
-		return {
-			dominantGroup,
-			netMovement,
-			maxStagnation,
-			irregularMovements
-		}
-	}
-
-	const startAnalysis = analyzeSequence(firstHalf, 'PHASE_1')
-	const endAnalysis = analyzeSequence(secondHalf, 'PHASE_2')
-
-	logger.add(`[PHASE 1] Dominio: ${startAnalysis.dominantGroup}, Estancamiento Max: ${startAnalysis.maxStagnation} ticks`)
-	logger.add(`[PHASE 2] Dominio: ${endAnalysis.dominantGroup}, Estancamiento Max: ${endAnalysis.maxStagnation} ticks`)
-
-	// 4. Detección de Latigazo (Whiplash) - Últimos 10-15s
-	const whiplashWindow = ticks.slice(-config.strategy.whiplashWindow)
-	let isWhiplash = false
+	const whiplashMove = phase3.netMovement
+	const whiplashVelocity = phase3.velocity
+	let whiplashType = 'NONE'
 	let whiplashDirection = 'NONE'
 
-	// Definimos latigazo como un movimiento fuerte al final sin retroceso
-	const whiplashStart = whiplashWindow[0]
-	const whiplashEnd = whiplashWindow[whiplashWindow.length - 1]
-	const whiplashMove = whiplashEnd - whiplashStart
-
-	// Si el movimiento final representa una gran parte del cuerpo total de la vela o es muy vertical
-	// Simplificación: si en los ultimos 15s movió más que en los primeros 45s de promedio
-	if (Math.abs(whiplashMove) > 0.000150) { // Umbral arbitrario de "fuerza repentina", ajustar
-		isWhiplash = true
+	// Clasificar latigazo según INFO_ESTRATEGIA.md
+	if (Math.abs(whiplashMove) > 0.000150 && whiplashVelocity > 0.000010) {
 		whiplashDirection = whiplashMove > 0 ? 'ALCISTA' : 'BAJISTA'
-		logger.add(`[WHIPLASH] Latigazo detectado al final (${whiplashDirection}). Movimiento: ${whiplashMove.toFixed(6)}`)
+
+		// Distinguir Fuerza vs Desesperación
+		const previousPhaseWasWeak = phase2.isWeak || phase2.maxStagnation >= 5
+
+		if (previousPhaseWasWeak) {
+			whiplashType = 'DESESPERACION'
+			logger.add(`⚡ LATIGAZO DE DESESPERACIÓN detectado (${whiplashDirection})`)
+			logger.add(`   Movimiento: ${whiplashMove.toFixed(6)} pips en ${phase3Ticks.length} ticks`)
+			logger.add(`   Velocidad: ${whiplashVelocity.toFixed(6)} pips/tick`)
+			logger.add(`   Contexto: Fase previa mostró debilidad/estancamiento`)
+		} else {
+			whiplashType = 'FUERZA'
+			logger.add(`💪 LATIGAZO DE FUERZA detectado (${whiplashDirection})`)
+			logger.add(`   Movimiento: ${whiplashMove.toFixed(6)} pips en ${phase3Ticks.length} ticks`)
+			logger.add(`   Velocidad: ${whiplashVelocity.toFixed(6)} pips/tick`)
+			logger.add(`   Contexto: Continuación de fuerza natural`)
+		}
+	} else {
+		logger.add(`Sin latigazo significativo`)
 	}
 
-	// 5. Verificación de Niveles en el momento del cierre
+	// ==========================================
+	// 5. DETECCIÓN DE APROVECHAMIENTO
+	// ==========================================
+	logger.add(``)
+	logger.add(`[STEP 5] ANÁLISIS DE APROVECHAMIENTO`)
+	logger.add(`─────────────────────────────────────────────────────────────`)
+
+	let exploitation = 'NONE'
+
+	// Verificar si un grupo aprovechó la debilidad del otro
+	if (phase1.dominantGroup !== phase2.dominantGroup) {
+		const phase1Weak = phase1.isWeak
+		const phase2Strong = !phase2.isWeak && phase2.velocity > phase1.velocity
+
+		if (phase1Weak && phase2Strong) {
+			exploitation = phase2.dominantGroup
+			logger.add(`✓ ${phase2.dominantGroup} APROVECHARON la debilidad de ${phase1.dominantGroup}`)
+			logger.add(`   Velocidad Fase 1: ${phase1.velocity.toFixed(6)} pips/tick`)
+			logger.add(`   Velocidad Fase 2: ${phase2.velocity.toFixed(6)} pips/tick`)
+			logger.add(`   Ratio: ${(phase2.velocity / phase1.velocity).toFixed(2)}x más rápido`)
+		} else {
+			logger.add(`Sin aprovechamiento claro (ambos grupos con fuerza similar)`)
+		}
+	} else {
+		logger.add(`Sin cambio de dominio entre fases`)
+	}
+
+	// ==========================================
+	// 6. VERIFICACIÓN DE NIVELES
+	// ==========================================
+	logger.add(``)
+	logger.add(`[STEP 6] VERIFICACIÓN DE NIVELES`)
+	logger.add(`─────────────────────────────────────────────────────────────`)
+
 	const levelCheck = checkLevelProximity(closePrice, levels)
 	if (levelCheck.isAtLevel) {
-		logger.add(`[LEVEL] Precio cerró en nivel: ${levelCheck.level.type} (${levelCheck.level.price})`)
+		const lvl = levelCheck.level
+		logger.add(`✓ Precio en nivel: ${lvl.type} @ ${lvl.price.toFixed(6)}`)
+		logger.add(`   Calidad: ${lvl.quality} (${lvl.touches || 1} toques)`)
+		logger.add(`   Distancia: ${Math.abs(closePrice - lvl.price).toFixed(6)} pips`)
+	} else {
+		logger.add(`Sin nivel cercano`)
 	}
 
 	// ==========================================
 	// LÓGICA DE DECISIÓN (Jerarquía LMTA)
 	// ==========================================
+	logger.add(``)
+	logger.add(`[STEP 7] LÓGICA DE DECISIÓN`)
+	logger.add(`═════════════════════════════════════════════════════════════`)
 
 	let decision = 'WAIT'
 	let confidence = 0
 	let reason = ''
 
-	// Caso: Latigazo de Desesperación
-	// Si hay latigazo hacia un nivel y se frena (o cierra justo en nivel), es reversión
-	if (isWhiplash && levelCheck.isAtLevel) {
-		// Latigazo alcista contra resistencia -> VENTA
+	// JERARQUÍA 1: Latigazo de Desesperación en Nivel (Máxima Prioridad)
+	if (whiplashType === 'DESESPERACION' && levelCheck.isAtLevel) {
+		logger.add(``)
+		logger.add(`🎯 REGLA 1: Latigazo de Desesperación en Nivel`)
+
 		if (whiplashDirection === 'ALCISTA' && (levelCheck.level.type === 'RESISTANCE' || levelCheck.level.type === 'ROUND_NUMBER')) {
 			decision = 'PUT'
-			reason = 'Latigazo de desesperación contra resistencia/nivel'
+			reason = 'Latigazo de desesperación contra resistencia'
 			confidence = 90
+			logger.add(`   ✓ Latigazo ALCISTA contra RESISTENCIA → VENTA`)
+
+			if (levelCheck.level.quality === 'STRONG') {
+				confidence += 5
+				logger.add(`   ✓ Nivel FUERTE → +5% confianza`)
+			}
 		}
-		// Latigazo bajista contra soporte -> COMPRA
 		else if (whiplashDirection === 'BAJISTA' && (levelCheck.level.type === 'SUPPORT' || levelCheck.level.type === 'ROUND_NUMBER')) {
 			decision = 'CALL'
-			reason = 'Latigazo de desesperación contra soporte/nivel'
+			reason = 'Latigazo de desesperación contra soporte'
 			confidence = 90
+			logger.add(`   ✓ Latigazo BAJISTA contra SOPORTE → COMPRA`)
+
+			if (levelCheck.level.quality === 'STRONG') {
+				confidence += 5
+				logger.add(`   ✓ Nivel FUERTE → +5% confianza`)
+			}
 		}
 	}
 
-	// Caso: Agotamiento / Estancamiento al final
-	// Si venía con fuerza y se estancó al final (PHASE 2 stangation high)
-	else if (endAnalysis.maxStagnation >= config.strategy.stagnation.maxTicks) {
-		// FILTRO "TIERRA DE NADIE":
-		// Solo operamos reversión por estancamiento si:
-		// A) Estamos en un Nivel (CheckLevel)
-		// B) O el estancamiento es brutal (> 12 ticks)
+	// JERARQUÍA 2: Agotamiento (Estancamiento DESPUÉS de progreso)
+	else if (phase3.maxStagnation >= config.strategy.stagnation.maxTicks && phase3.hadProgress) {
+		logger.add(``)
+		logger.add(`🎯 REGLA 2: Agotamiento (Estancamiento tras Progreso)`)
+		logger.add(`   Estancamiento: ${phase3.maxStagnation} ticks`)
+		logger.add(`   Tuvo Progreso Previo: ${phase3.hadProgress ? 'SÍ' : 'NO'}`)
 
-		const isExtremeStagnation = endAnalysis.maxStagnation >= 12
-		const isValidReversalContext = levelCheck.isAtLevel || isExtremeStagnation
+		const isValidContext = levelCheck.isAtLevel || phase3.maxStagnation >= 12
 
-		if (isValidReversalContext) {
-			// Si se estancó arriba -> VENTA (posible)
-			if (endAnalysis.dominantGroup === 'COMPRADORES') {
+		if (isValidContext) {
+			if (phase3.dominantGroup === 'COMPRADORES') {
 				decision = 'PUT'
-				reason = isExtremeStagnation ? 'Estancamiento extremo de compradores' : 'Agotamiento en Nivel clave'
+				reason = phase3.maxStagnation >= 12 ? 'Agotamiento extremo de compradores' : 'Agotamiento en nivel clave'
 				confidence = 75
-			} else if (endAnalysis.dominantGroup === 'VENDEDORES') {
+				logger.add(`   ✓ COMPRADORES agotados → VENTA`)
+
+				if (levelCheck.isAtLevel && levelCheck.level.quality === 'STRONG') {
+					confidence += 10
+					logger.add(`   ✓ Agotamiento en nivel FUERTE → +10% confianza`)
+				}
+			} else if (phase3.dominantGroup === 'VENDEDORES') {
 				decision = 'CALL'
-				reason = isExtremeStagnation ? 'Estancamiento extremo de vendedores' : 'Agotamiento en Nivel clave'
+				reason = phase3.maxStagnation >= 12 ? 'Agotamiento extremo de vendedores' : 'Agotamiento en nivel clave'
 				confidence = 75
+				logger.add(`   ✓ VENDEDORES agotados → COMPRA`)
+
+				if (levelCheck.isAtLevel && levelCheck.level.quality === 'STRONG') {
+					confidence += 10
+					logger.add(`   ✓ Agotamiento en nivel FUERTE → +10% confianza`)
+				}
 			}
 		} else {
-			logger.add(`[FILTER] Estancamiento detectado (${endAnalysis.maxStagnation} ticks) pero sin nivel de apoyo. Se ignora por "Tierra de Nadie".`)
+			logger.add(`   ✗ Estancamiento sin nivel de apoyo → Ignorado (Tierra de Nadie)`)
 		}
 	}
 
-	// Caso: Continuidad de Fuerza Natural
-	// Si Phase 1 y Phase 2 son consistentes, no hay irregularidades graves, y no hay niveles bloqueando
-	else if (
-		startAnalysis.dominantGroup === endAnalysis.dominantGroup &&
-		startAnalysis.irregularMovements === 0 &&
-		endAnalysis.irregularMovements === 0 &&
-		!levelCheck.isAtLevel // No chocamos con nivel
-	) {
-		if (startAnalysis.dominantGroup === 'COMPRADORES') {
+	// JERARQUÍA 3: Aprovechamiento (Grupo B responde con fuerza)
+	else if (exploitation !== 'NONE') {
+		logger.add(``)
+		logger.add(`🎯 REGLA 3: Aprovechamiento del Grupo Contrario`)
+		logger.add(`   ${exploitation} aprovecharon la debilidad`)
+
+		if (exploitation === 'COMPRADORES') {
 			decision = 'CALL'
-			reason = 'Fuerza natural alcista sostenida sin bloqueos'
+			reason = 'Compradores aprovecharon debilidad de vendedores'
 			confidence = 80
+			logger.add(`   ✓ COMPRADORES dominan → COMPRA`)
 		} else {
 			decision = 'PUT'
-			reason = 'Fuerza natural bajista sostenida sin bloqueos'
+			reason = 'Vendedores aprovecharon debilidad de compradores'
 			confidence = 80
+			logger.add(`   ✓ VENDEDORES dominan → VENTA`)
 		}
 	}
 
-	// Desempate con Patrones y Tendencia
+	// JERARQUÍA 4: Continuidad de Fuerza Natural
+	else if (
+		phase1.dominantGroup === phase2.dominantGroup &&
+		phase2.dominantGroup === phase3.dominantGroup &&
+		!phase1.isWeak &&
+		!phase2.isWeak &&
+		!phase3.isWeak &&
+		!levelCheck.isAtLevel
+	) {
+		logger.add(``)
+		logger.add(`🎯 REGLA 4: Continuidad de Fuerza Natural`)
+		logger.add(`   Las 3 fases muestran dominio de ${phase3.dominantGroup}`)
+		logger.add(`   Sin irregularidades ni bloqueos`)
+
+		if (phase3.dominantGroup === 'COMPRADORES') {
+			decision = 'CALL'
+			reason = 'Fuerza alcista sostenida sin bloqueos'
+			confidence = 75
+			logger.add(`   ✓ COMPRADORES fuertes → COMPRA`)
+		} else {
+			decision = 'PUT'
+			reason = 'Fuerza bajista sostenida sin bloqueos'
+			confidence = 75
+			logger.add(`   ✓ VENDEDORES fuertes → VENTA`)
+		}
+	}
+
+	// Si no hay decisión clara
+	if (decision === 'WAIT') {
+		logger.add(``)
+		logger.add(`⚠️ Sin señal clara - Esperando mejor oportunidad`)
+		logger.add(`   Razones:`)
+		if (phase3.isWeak) logger.add(`   - Fase 3 muestra debilidad`)
+		if (levelCheck.isAtLevel && decision === 'WAIT') logger.add(`   - Precio en nivel pero sin señal de reversión`)
+		if (phase1.dominantGroup !== phase2.dominantGroup && exploitation === 'NONE') {
+			logger.add(`   - Cambio de dominio sin aprovechamiento claro`)
+		}
+	}
+
+	// ==========================================
+	// STEP 7.5: ZONA OBJETIVO (TARGET ZONE)
+	// ==========================================
+	// Identificar el nivel al que el precio "quiere ir" si operamos
+	const targetZoneInfo = getTargetZone(closePrice, decision === 'WAIT' ? null : decision, levels)
+
 	if (decision !== 'WAIT') {
-		// Aumentar confianza si tendencia coincide
+		logger.add(``)
+		logger.add(`[STEP 7.5] ZONA OBJETIVO`)
+		logger.add(`─────────────────────────────────────────────────────────────`)
+
+		if (targetZoneInfo.hasTarget) {
+			logger.add(`Objetivo: ${targetZoneInfo.description}`)
+			if (targetZoneInfo.hasSpace) {
+				logger.add(`✓ Espacio suficiente hasta el objetivo (${targetZoneInfo.distancePips.toFixed(6)} pips)`)
+			} else {
+				logger.add(`⚠️ Objetivo demasiado cercano (${targetZoneInfo.distancePips.toFixed(6)} pips). El precio puede rebotar antes.`)
+				// No cancela la operación, pero baja la confianza
+				confidence = Math.max(0, confidence - 15)
+				logger.add(`   -15% confianza por objetivo cercano`)
+			}
+		} else {
+			logger.add(`Sin nivel bloqueante visible en dirección ${decision} → precio tiene espacio libre`)
+		}
+	}
+
+	// ==========================================
+	// STEP 8: FILTRO DE CONTEXTO DE MERCADO
+	// ==========================================
+	if (decision !== 'WAIT') {
+		logger.add(``)
+		logger.add(`[STEP 8] FILTRO DE CONTEXTO DE MERCADO`)
+		logger.add(`─────────────────────────────────────────────────────────────`)
+
+		const contextCheck = checkMarketContext(decision, candles, levels, trendInfo, closePrice)
+
+		if (!contextCheck.allowed) {
+			contextCheck.blocks.forEach(block => logger.add(`❌ ${block}`))
+			decision = 'WAIT'
+			reason = 'Bloqueado por contexto de mercado'
+			confidence = 0
+			logger.add(`✗ Operación CANCELADA por filtro de contexto`)
+		} else {
+			logger.add(`✓ Contexto de mercado favorable - Proceder`)
+		}
+	}
+
+	// ==========================================
+	// STEP 9: VALIDACIÓN Y AJUSTE FINAL
+	// ==========================================
+	if (decision !== 'WAIT') {
+		logger.add(``)
+		logger.add(`[STEP 9] VALIDACIÓN Y AJUSTE`)
+		logger.add(`─────────────────────────────────────────────────────────────`)
+
+		// Tendencia
 		if ((decision === 'CALL' && trend === 'ALCISTA') || (decision === 'PUT' && trend === 'BAJISTA')) {
 			confidence += 10
-			logger.add(`[BONUS] A favor de tendencia general (${trend}). +10% confianza.`)
+			logger.add(`✓ A favor de tendencia (${trend}) → +10% confianza`)
 		}
 
-		// Verificar patrones en contra
+		// Patrones en contra
 		const contraryPattern = patterns.find(p => p.prediction !== decision)
 		if (contraryPattern) {
-			confidence -= 40 // Aumentado de 20 a 40 para ser más estricto
-			logger.add(`[WARNING] Patrón en contra detectado (${contraryPattern.name}). -40% confianza.`)
+			confidence -= 40
+			logger.add(`⚠️ Patrón en contra (${contraryPattern.name}) → -40% confianza`)
 			if (confidence < 60) {
 				decision = 'WAIT'
 				reason = 'Cancelado por conflicto con patrones'
+				logger.add(`✗ Confianza insuficiente → CANCELADO`)
 			}
 		}
 
+		// Secuencias
+		if (config.strategy.sequences.enabled && decision !== 'WAIT') {
+			const sequenceContext = detectCandleSequence(candles)
+			if (sequenceContext.found) {
+				logger.add(`Secuencia: ${sequenceContext.pattern} → Predicción: ${sequenceContext.nextPrediction}`)
+
+				if (sequenceContext.nextPrediction === decision) {
+					confidence += 10
+					logger.add(`✓ Secuencia apoya decisión → +10% confianza`)
+				} else if (sequenceContext.nextPrediction !== 'NEUTRAL') {
+					confidence -= 20
+					logger.add(`⚠️ Secuencia contradice → -20% confianza`)
+
+					if (confidence < 60) {
+						decision = 'WAIT'
+						reason = `Cancelado por contradicción de secuencia (${sequenceContext.pattern})`
+						logger.add(`✗ Confianza insuficiente → CANCELADO`)
+					}
+				}
+			}
+		}
 	}
 
-	logger.add(`[DECISION] Resultado Final: ${decision} (Confianza: ${confidence}%)`)
+	// ==========================================
+	// RESULTADO FINAL
+	// ==========================================
+	logger.add(``)
+	logger.add(`╔═══════════════════════════════════════════════════════════════╗`)
+	logger.add(`║ DECISIÓN FINAL`)
+	logger.add(`╚═══════════════════════════════════════════════════════════════╝`)
+	logger.add(``)
+	logger.add(`Operación: ${decision === 'WAIT' ? '❌ NO OPERAR' : `✅ ${decision}`}`)
+	logger.add(`Razón: ${reason || 'Sin señal clara'}`)
+	logger.add(`Confianza: ${confidence}%`)
+	logger.add(``)
 
 	return {
 		shouldOperate: decision !== 'WAIT',
 		direction: decision === 'WAIT' ? '' : decision,
 		reason: reason,
+		confidence: confidence,
 		analysis: logger.getReport(),
-		// Datos crudos para reporte
+		// Datos crudos para reporte detallado
 		ticks: ticks,
+		candles: candles.slice(-20), // Últimas 20 velas para contexto
 		indicators: {
 			trend,
-			levels: levelCheck,
+			trendStrength: trendInfo.strength,
+			levels: levels.map(l => ({ price: l.price, zoneTop: l.zoneTop, zoneBottom: l.zoneBottom, type: l.type, quality: l.quality, rejections: l.rejections, touches: l.touches, isWorn: l.isWorn, isFlipped: l.isFlipped })),
+			targetZone: targetZoneInfo,
+			levelCheck,
 			patterns,
-			whiplash: { isWhiplash, whiplashDirection, whiplashMove },
-			phase1: startAnalysis,
-			phase2: endAnalysis
+			whiplash: { type: whiplashType, direction: whiplashDirection, move: whiplashMove, velocity: whiplashVelocity },
+			phases: {
+				phase1: { ...phase1, ticks: phase1Ticks.length },
+				phase2: { ...phase2, ticks: phase2Ticks.length },
+				phase3: { ...phase3, ticks: phase3Ticks.length }
+			},
+			exploitation
 		}
 	}
 }

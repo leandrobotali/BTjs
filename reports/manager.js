@@ -1,8 +1,10 @@
 const fs = require('fs').promises
 const path = require('path')
+const config = require('../config')
 
 // Archivo donde se guardarán los logs detallados (JSON Lines)
-const LOG_FILE = path.join(__dirname, '../../operations.json')
+const archive_name = `operations_${config.version}.json`
+const LOG_FILE = path.join(__dirname, '../', archive_name)
 
 async function addOperation(operation) {
 	// Procesamiento asíncrono para no bloquear el worker principal

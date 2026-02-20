@@ -1,6 +1,7 @@
 const config = require('./config.js')
-const { loadActiveSchedule } = require('./core/active.js')
-const { loadInitialCandles, addNewCandle, getCandles, addNewTick, clearTicks, getTicks } = require('./core/candles.js')
+const { loadActiveSchedule, reloadSchedulePeriodically } = require('./core/active.js')
+const { loadInitialCandles, addNewCandle, getCandles, addNewTick, clearTicks, getTicks, setCachedLevels } = require('./core/candles.js')
+const { getLevels } = require('./indicators/levels.js')
 const { analyzeStrategy } = require('./strategy/strategy-core.js')
 const { executeOperation, isOperating } = require('./operations/trade.js')
 const { addOperation, checkAndSaveHourly } = require('./reports/manager.js')
@@ -16,6 +17,9 @@ async function initialize(API) {
 
 		console.log('[INIT] Cargando velas históricas...')
 		await loadInitialCandles(API, config.activePrincipal)
+
+		console.log('[INIT] Configurando recarga periódica del schedule...')
+		reloadSchedulePeriodically(API, 1) // Recarga cada 1 hora
 
 		console.log('[INIT] Suscribiéndose a generación de velas...')
 		API.onCandleGenerate(config.activePrincipal, async (candle) => {
@@ -45,11 +49,22 @@ async function handleNewCandle(API, candle) {
 			// console.log('candleee : ', candle);
 
 			console.log(`\n[CANDLE] Nueva vela: ${candle.id} | ${candle.open} -> ${candle.close}`)
+			console.log('[STRATEGY] Calculando niveles S/R...')
+
+			// Calcular y cachear niveles S/R una sola vez por vela nueva
+			const currentCandles = getCandles()
+			const levels = getLevels(currentCandles)
+			setCachedLevels(levels)
+			console.log(`[LEVELS] ${levels.length} zonas activas calculadas`)
+
 			console.log('[STRATEGY] Analizando...')
+			const decision = await analyzeStrategy(currentCandles, getTicks(), levels)
 
-			const decision = await analyzeStrategy(getCandles(), getTicks())
-
-			console.log(decision)
+			console.log('-DECISION-', {
+				shouldOperate: decision.shouldOperate,
+				reason: decision.reason,
+				analysis: decision.analysis
+			})
 
 			clearTicks()
 

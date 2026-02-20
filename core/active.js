@@ -13,16 +13,16 @@ async function loadActiveSchedule(API) {
 		const active = await API.getActiveList(`front.${config.activePrincipal}`);
 
 		if (active && Array.isArray(active.schedule)) {
-				// Normalizar a objetos y asegurar números
-				const normalized = active.schedule
-					.map(pair => {
-						// Acepta tanto [start, end] como {start, end}
-						const start = Number(Array.isArray(pair) ? pair[0] : pair.start);
-						const end = Number(Array.isArray(pair) ? pair[1] : pair.end);
-						return { start, end };
-					})
-					// Filtrar entradas inválidas
-					.filter(({ start, end }) => Number.isFinite(start) && Number.isFinite(end));
+			// Normalizar a objetos y asegurar números
+			const normalized = active.schedule
+				.map(pair => {
+					// Acepta tanto [start, end] como {start, end}
+					const start = Number(Array.isArray(pair) ? pair[0] : pair.start);
+					const end = Number(Array.isArray(pair) ? pair[1] : pair.end);
+					return { start, end };
+				})
+				// Filtrar entradas inválidas
+				.filter(({ start, end }) => Number.isFinite(start) && Number.isFinite(end));
 
 			if (normalized.length === 0) {
 				console.log(`[ACTIVE] ADVERTENCIA: schedule vacío para ${config.activePrincipal}`);

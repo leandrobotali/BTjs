@@ -4,6 +4,7 @@ const SimpleMutex = require('./mutex.js')
 let candles = []
 let ticks = []
 let lastCandleId = null
+let cachedLevels = []  // Niveles de S/R cacheados — solo se recalculan en vela nueva
 const candleMutex = new SimpleMutex()
 const candleMutexTick = new SimpleMutex()
 
@@ -106,6 +107,14 @@ function getTicks() {
 	return [...ticks]
 }
 
+function getCachedLevels() {
+	return cachedLevels
+}
+
+function setCachedLevels(levels) {
+	cachedLevels = levels
+}
+
 module.exports = {
 	loadInitialCandles,
 	addNewCandle,
@@ -113,5 +122,7 @@ module.exports = {
 	getLastCandles,
 	addNewTick,
 	clearTicks,
-	getTicks
+	getTicks,
+	getCachedLevels,
+	setCachedLevels
 }

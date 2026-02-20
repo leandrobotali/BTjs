@@ -51,8 +51,10 @@ async function executeOperation(API, decision) {
 			amount: config.inversion,
 			timestamp: new Date(),
 			reason: decision.reason,
+			confidence: decision.confidence,
 			analysis: decision.analysis,
 			ticks: decision.ticks,
+			candles: decision.candles, // Últimas 20 velas para contexto
 			indicators: decision.indicators
 		}
 
