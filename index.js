@@ -37,7 +37,6 @@ async function handleNewCandle(API, candle) {
 	let newCandle = false
 	try {
 		// checkAndSaveHourly() - Deprecated: Se guarda por operación en tiempo real
-		console.log(candle);
 
 		const added = addNewCandle(candle)
 		if (!added) {
