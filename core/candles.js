@@ -5,10 +5,11 @@ let candles = []
 let ticks = []
 let lastCandleId = null
 let cachedLevels = []  // Niveles de S/R cacheados — solo se recalculan en vela nueva
+let lastVolume = 0     // Volumen del último tick de la vela en curso (acumulado real)
 let volumeEMA = null   // EMA de volumen de velas activas (se actualiza con cada vela nueva)
 const VOLUME_EMA_PERIOD = 50
 const VOLUME_EMA_K = 2 / (VOLUME_EMA_PERIOD + 1)
-const VOLUME_EMA_MIN_ACTIVE = 20 // Volumen mínimo para considerar vela "activa"
+const VOLUME_EMA_MIN_ACTIVE = 10 // Mínimo de ticks para considerar vela "activa" (proxy de volumen)
 const candleMutex = new SimpleMutex()
 const candleMutexTick = new SimpleMutex()
 
@@ -62,13 +63,15 @@ function addNewCandle(candle) {
 
 		const newCandle = {
 			...candle,
+			volume: lastVolume, // volumen acumulado real de la vela cerrada
 			direction: candle.open < candle.close ? 'ALCISTA' : (candle.open > candle.close ? 'BAJISTA' : 'NONE')
 		}
 
 		candles.push(newCandle)
 
 		// Actualizar EMA de volumen con la vela nueva
-		updateVolumeEMA(candle.volume || 0)
+		updateVolumeEMA(lastVolume)
+		lastVolume = 0
 
 		// Mantener solo las últimas cantCandles
 		if (candles.length > parseInt(config.cantCandles)) {
@@ -103,6 +106,10 @@ function addNewTick(tick) {
 	} finally {
 		candleMutexTick.unlock()
 	}
+}
+
+function setLastVolume(volume) {
+	if (volume) lastVolume = volume
 }
 
 function clearTicks() {
@@ -150,6 +157,7 @@ module.exports = {
 	getTicks,
 	getCachedLevels,
 	setCachedLevels,
+	setLastVolume,
 	updateVolumeEMA,
 	getVolumeEMA
 }
