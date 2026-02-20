@@ -15,10 +15,15 @@ module.exports = {
 			minSwingCandles: 2,       // Mínimo de velas en cada dirección para validar giro
 			maxZoneWidth: 0.000100,   // Zona máxima de 10 pips de ancho (CONCEPTOS_BASICOS)
 
-			// Fuerza de zona (basada en rechazos confirmados, no simples toques)
-			mediumRejections: 2,      // Rechazos para calidad MEDIUM
-			strongRejections: 4,      // Rechazos para calidad STRONG
+			// Fuerza de zona (basada en score ponderado: intensidad × recencia)
+			mediumScore: 1.5,         // Score ponderado mínimo para calidad MEDIUM
+			strongScore: 3.0,         // Score ponderado mínimo para calidad STRONG
+			mediumRejections: 2,      // Rechazos para calidad MEDIUM (fallback en clusters)
+			strongRejections: 4,      // Rechazos para calidad STRONG (fallback en clusters)
 			wornTouches: 5,           // Testeos para considerar zona "desgastada"
+
+			// Recencia: niveles viejos pierden relevancia
+			maxAge: 200,              // Velas de antigüedad para deprioritizar un nivel
 
 			// Ruptura válida (para cambio de polaridad / flip)
 			minBreakRatio: 0.20,      // Cuerpo debe cerrar 20%+ fuera de la zona para confirmar ruptura

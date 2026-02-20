@@ -8,9 +8,11 @@
  * - Zona máxima: 10 pips de ancho.
  * - Zonas cercanas se unen en clusters.
  * - Cambio de Polaridad (Flip): soporte roto → resistencia, resistencia rota → soporte.
- * - Fuerza: # de rechazos (reversos confirmados), NO solo toques.
+ * - Fuerza: score ponderado (intensidad × recencia × progresión × obviedad), NO solo toques.
  * - Regla de Desgaste: zona con >4 toques sin ser rota = zona debilitada.
  * - Zona Objetivo: El nivel más relevante al que el precio "quiere ir" desde la posición actual.
+ * - Números Redondos: jerarquía Master (.xx0000) > Strong (.xxx000) > Medium (.xxx500).
+ * - Recencia: niveles de más de 200 velas pierden relevancia.
  */
 
 const config = require('../config.js')
@@ -22,15 +24,20 @@ const config = require('../config.js')
 /**
  * Escanea candles y retorna zonas válidas de S/R.
  * Regla: 2+ velas en una dirección → 2+ velas contrarias → punto de giro válido.
+ * Incluye "obviousness" (magnitud del reverso) como métrica de calidad.
  *
  * @param {Array} candles - velas cerradas históricas
- * @returns {Array} zonas raw: { price, zoneTop, zoneBottom, type, candleIndex }
+ * @returns {Array} zonas raw: { price, zoneTop, zoneBottom, type, candleIndex, magnitude }
  */
 function detectRawZones(candles) {
     const cfg = config.strategy.levels
     const zones = []
     const n = candles.length
     const minSwing = cfg.minSwingCandles  // mínimo de velas en cada dirección
+
+    // Tamaño promedio de vela para normalizar la magnitud del reverso
+    const sample = candles.slice(-50)
+    const avgRange = sample.reduce((s, c) => s + (c.max - c.min), 0) / (sample.length || 1) || 0.000050
 
     for (let i = minSwing; i < n - minSwing; i++) {
         const curr = candles[i]
@@ -48,6 +55,9 @@ function detectRawZones(candles) {
             const zoneBottom = bodyTop           // cuerpo = inicio del área
             const zoneWidth = zoneTop - zoneBottom
 
+            // Calcular magnitud del reverso: cuánto bajó después del pivote
+            const magnitude = calcReversalMagnitude(candles, i, 'DOWN', avgRange)
+
             // Filtro: zona no puede ser más ancha que MAX_ZONE_WIDTH
             if (zoneWidth <= cfg.maxZoneWidth) {
                 zones.push({
@@ -56,7 +66,8 @@ function detectRawZones(candles) {
                     zoneBottom: zoneBottom,
                     type: 'RESISTANCE',
                     candleIndex: i,
-                    age: n - i             // cuántas velas hace
+                    age: n - i,            // cuántas velas hace
+                    magnitude              // obviedad: qué tan grande fue el reverso
                 })
             }
         }
@@ -73,6 +84,9 @@ function detectRawZones(candles) {
             const zoneBottom = curr.min           // mecha = límite real de rechazo
             const zoneWidth = zoneTop - zoneBottom
 
+            // Calcular magnitud del reverso: cuánto subió después del pivote
+            const magnitude = calcReversalMagnitude(candles, i, 'UP', avgRange)
+
             if (zoneWidth <= cfg.maxZoneWidth) {
                 zones.push({
                     price: zoneBottom,       // punto de referencia principal = mecha
@@ -80,13 +94,41 @@ function detectRawZones(candles) {
                     zoneBottom: zoneBottom,
                     type: 'SUPPORT',
                     candleIndex: i,
-                    age: n - i
+                    age: n - i,
+                    magnitude
                 })
             }
         }
     }
 
     return zones
+}
+
+/**
+ * Calcula la magnitud del reverso después de un punto de giro.
+ * Mide cuánto se movió el precio en la dirección opuesta después del pivote.
+ * Normalizado contra avgRange: 1.0 = promedio, >2.0 = muy obvio.
+ *
+ * @param {Array}  candles
+ * @param {number} pivotIdx - índice del pivote
+ * @param {'UP'|'DOWN'} reversalDir - dirección del reverso
+ * @param {number} avgRange - rango promedio para normalizar
+ * @returns {number} magnitud normalizada (0-3, capped)
+ */
+function calcReversalMagnitude(candles, pivotIdx, reversalDir, avgRange) {
+    let totalMove = 0
+    const lookAhead = Math.min(5, candles.length - pivotIdx - 1)
+
+    for (let j = 1; j <= lookAhead; j++) {
+        const c = candles[pivotIdx + j]
+        const move = Math.abs(c.close - c.open)
+        const isCorrectDir = (reversalDir === 'UP' && c.close > c.open) ||
+            (reversalDir === 'DOWN' && c.close < c.open)
+        if (isCorrectDir) totalMove += move
+        else break
+    }
+
+    return Math.min(totalMove / avgRange, 3.0) // cap at 3.0
 }
 
 /**
@@ -127,8 +169,10 @@ function countDirectionalCandles(candles, start, step, dir, minCount) {
  *   1. Rechazos confirmados (vela siguiente va en dirección opuesta)
  *   2. Intensidad del rechazo (cuerpo grande = rechazo fuerte)
  *   3. Recencia (toques recientes valen más que toques viejos)
+ *   4. Progresión (toques 2-3 fortalecen, toques 4+ debilitan)
+ *   5. Obviedad (magnitud del reverso original)
  *
- * @param {Object} zone   - zona raw
+ * @param {Object} zone   - zona raw (con magnitude)
  * @param {Array}  candles
  * @returns {Object} zona enriquecida con rejections, weightedScore, quality, isWorn
  */
@@ -178,10 +222,37 @@ function evaluateZoneStrength(zone, candles) {
         }
     }
 
+    // Factor 3 — Progresión: toques 2-3 fortalecen, 4+ debilitan (doc: "desgaste")
+    // "El primer toque crea zona débil; segundo y tercero la confirman como zona fuerte."
+    // "Demasiados toques (más de 4 o 5) = zona debilitada."
+    let progressionMultiplier = 1.0
+    if (touches >= 2 && touches <= 3) {
+        progressionMultiplier = 1.2  // confirmación = bonus
+    } else if (touches >= 4) {
+        progressionMultiplier = 0.7  // desgaste = penalización
+    }
+    weightedScore *= progressionMultiplier
+
+    // Factor 4 — Obviedad: magnitud del reverso original
+    // Una zona formada por un reverso grande es más "obvia" y atrae más órdenes
+    const magnitude = zone.magnitude || 0
+    if (magnitude > 0) {
+        // Bonus: magnitud 1.0 = +20%, magnitud 2.0 = +40%, cap en +60%
+        const magnitudeBonus = 1.0 + Math.min(magnitude * 0.2, 0.6)
+        weightedScore *= magnitudeBonus
+    }
+
     // Clasificar fuerza usando el score ponderado
     let quality = 'WEAK'
     if (weightedScore >= cfg.strongScore) quality = 'STRONG'
     else if (weightedScore >= cfg.mediumScore) quality = 'MEDIUM'
+
+    // Preservar calidad mínima de zonas especiales (ROUND_NUMBER tiene calidad inherente)
+    // Los números redondos tienen importancia psicológica/institucional sin necesitar rechazos
+    const qualityRank = { 'WEAK': 0, 'MEDIUM': 1, 'STRONG': 2 }
+    if (zone.quality && qualityRank[zone.quality] > qualityRank[quality]) {
+        quality = zone.quality
+    }
 
     // Desgaste: demasiados toques sin ser rota = zona próxima a romper
     const isWorn = touches >= cfg.wornTouches
@@ -274,10 +345,9 @@ function applyPolarityFlip(zone, candles) {
 
 /**
  * Agrupa zonas cuyos rangos se solapan o están a ≤ clusterDistance.
- * Se fusionan sumando rechazos y promediando precios.
+ * Se fusionan sumando scores ponderados y promediando precios.
  *
  * @param {Array}  zones
- * @param {number} clusterDistance - distancia máxima para agrupar
  * @returns {Array} zonas fusionadas
  */
 function clusterZones(zones) {
@@ -310,16 +380,26 @@ function clusterZones(zones) {
 function mergeZoneCluster(cluster) {
     const totalRejections = cluster.reduce((s, z) => s + (z.rejections || 1), 0)
     const totalTouches = cluster.reduce((s, z) => s + (z.touches || 1), 0)
+    const totalWeightedScore = cluster.reduce((s, z) => s + (z.weightedScore || 0), 0)
     const avgPrice = cluster.reduce((s, z) => s + z.price, 0) / cluster.length
+    const maxMagnitude = Math.max(...cluster.map(z => z.magnitude || 0))
 
     const zoneTop = Math.max(...cluster.map(z => z.zoneTop))
     const zoneBottom = Math.min(...cluster.map(z => z.zoneBottom))
+
+    // Preservar roundLevel del miembro más importante
+    const qualityRank = { 'WEAK': 0, 'MEDIUM': 1, 'STRONG': 2 }
+    const roundMember = cluster
+        .filter(z => z.roundLevel)
+        .sort((a, b) => (qualityRank[b.quality] || 0) - (qualityRank[a.quality] || 0))[0]
+    const roundLevel = roundMember ? roundMember.roundLevel : undefined
 
     // Priorizar tipo: FLIP > SUPPORT/RESISTANCE con más rechazos
     const hasFlip = cluster.some(z => z.isFlipped)
     const types = cluster.map(z => z.type)
     const hasSupport = types.includes('SUPPORT')
     const hasResistance = types.includes('RESISTANCE')
+    const hasRoundNumber = types.includes('ROUND_NUMBER')
 
     let finalType = cluster[0].type
     if (hasFlip) {
@@ -329,10 +409,24 @@ function mergeZoneCluster(cluster) {
         finalType = 'KEY_ZONE'
     }
 
+    // Clasificar usando el score ponderado acumulado (no solo conteo de rechazos)
     const cfg = config.strategy.levels
     let quality = 'WEAK'
-    if (totalRejections >= cfg.strongRejections) quality = 'STRONG'
+    if (totalWeightedScore >= cfg.strongScore) quality = 'STRONG'
+    else if (totalWeightedScore >= cfg.mediumScore) quality = 'MEDIUM'
+    // Fallback: si el score es 0 (por ejemplo, zonas de números redondos sin toques previos)
+    // usar el conteo de rechazos como respaldo
+    else if (totalRejections >= cfg.strongRejections) quality = 'STRONG'
     else if (totalRejections >= cfg.mediumRejections) quality = 'MEDIUM'
+
+    // Preservar calidad mínima de miembros especiales (round numbers, etc.)
+    // La mejor calidad pre-existente actúa como piso
+    const bestPreExisting = cluster.reduce((best, z) => {
+        return (qualityRank[z.quality] || 0) > (qualityRank[best] || 0) ? z.quality : best
+    }, 'WEAK')
+    if (qualityRank[bestPreExisting] > qualityRank[quality]) {
+        quality = bestPreExisting
+    }
 
     const isWorn = totalTouches >= cfg.wornTouches
 
@@ -344,8 +438,11 @@ function mergeZoneCluster(cluster) {
         quality: quality,
         rejections: totalRejections,
         touches: totalTouches,
+        weightedScore: Math.round(totalWeightedScore * 100) / 100,
+        magnitude: maxMagnitude,
         isWorn: isWorn,
         isFlipped: hasFlip,
+        roundLevel: roundLevel,
         clusterSize: cluster.length,
         age: Math.min(...cluster.map(z => z.age || 0))
     }
@@ -358,6 +455,7 @@ function mergeZoneCluster(cluster) {
 /**
  * Calcula todas las zonas de S/R activas.
  * Retorna solo zonas MEDIUM o STRONG, no desgastadas críticamente.
+ * Aplica filtro de recencia: niveles viejos (>maxAge) se depriorizan un tier.
  *
  * @param {Array} candles
  * @returns {Array} zonas activas ordenadas por precio
@@ -365,10 +463,12 @@ function mergeZoneCluster(cluster) {
 function getLevels(candles) {
     if (candles.length < 10) return []
 
-    // 1. Detectar zonas crudas (reversa confirmada)
+    const cfg = config.strategy.levels
+
+    // 1. Detectar zonas crudas (reversa confirmada + magnitud de reverso)
     const rawZones = detectRawZones(candles)
 
-    // 2. Evaluar fuerza de cada zona (rechazos reales)
+    // 2. Evaluar fuerza de cada zona (rechazos reales + intensidad + recencia + progresión + obviedad)
     const withStrength = rawZones.map(z => evaluateZoneStrength(z, candles))
 
     // 3. Aplicar Cambio de Polaridad (Flip)
@@ -377,7 +477,7 @@ function getLevels(candles) {
     // 4. Filtrar zonas rotas SIN flip (ya no son válidas)
     const activeZones = withFlip.filter(z => !z.isBroken || z.isFlipped)
 
-    // 5. Agregar números redondos como zonas especiales
+    // 5. Agregar números redondos como zonas especiales (con jerarquía)
     const roundZones = detectRoundNumberZones(candles)
 
     // 6. Combinar todo y re-evaluar fuerza de round zones
@@ -386,25 +486,40 @@ function getLevels(candles) {
     // 7. Clustering: unir zonas cercanas
     const clustered = clusterZones(allZones)
 
-    // 8. Filtrar: KEY_ZONE siempre pasa; STRONG pasa; MEDIUM pasa si no está desgastada
-    const filtered = clustered.filter(z => {
+    // 8. Filtro de recencia: deprioritizar zonas viejas (>maxAge velas)
+    const withRecency = clustered.map(z => {
+        if (z.age > cfg.maxAge && z.type !== 'KEY_ZONE' && z.type !== 'ROUND_NUMBER') {
+            // Demote quality by one tier (STRONG → MEDIUM, MEDIUM → WEAK)
+            let adjustedQuality = z.quality
+            if (z.quality === 'STRONG') adjustedQuality = 'MEDIUM'
+            else if (z.quality === 'MEDIUM') adjustedQuality = 'WEAK'
+            return { ...z, quality: adjustedQuality, agedOut: true }
+        }
+        return { ...z, agedOut: false }
+    })
+
+    // 9. Filtrar: KEY_ZONE siempre pasa; STRONG pasa; MEDIUM pasa si no está desgastada
+    const filtered = withRecency.filter(z => {
         if (z.type === 'KEY_ZONE') return true       // flip zones: máxima confiabilidad, siempre activas
         if (z.quality === 'STRONG') return true
         if (z.quality === 'MEDIUM' && !z.isWorn) return true
         return false
     })
 
-    // 9. Ordenar por precio ascendente
+    // 10. Ordenar por precio ascendente
     return filtered.sort((a, b) => a.price - b.price)
 }
 
 // ============================================================
-// NÚMEROS REDONDOS
+// NÚMEROS REDONDOS (con jerarquía de importancia)
 // ============================================================
 
 /**
  * Genera zonas de números redondos en el rango de precios actual.
- * (Los institucionales colocan órdenes en precios terminados en .000 y .500)
+ * Jerarquía basada en CONCEPTOS_BASICOS.md:
+ *   - MASTER (.xx0000): Nivel más fuerte de reacción
+ *   - STRONG (.xxx000): Líneas principales del broker
+ *   - MEDIUM (.xxx500): Punto de apoyo frecuente
  */
 function detectRoundNumberZones(candles) {
     const recent = candles.slice(-20)
@@ -420,6 +535,10 @@ function detectRoundNumberZones(candles) {
     while (roundPrice <= priceMax + step) {
         if (roundPrice >= priceMin - step) {
             const halfPip = 0.000050
+
+            // Determinar jerarquía de importancia
+            const roundInfo = classifyRoundNumber(roundPrice)
+
             zones.push({
                 price: roundPrice,
                 zoneTop: roundPrice + halfPip,
@@ -427,9 +546,11 @@ function detectRoundNumberZones(candles) {
                 type: 'ROUND_NUMBER',
                 candleIndex: 0,
                 age: 0,
-                rejections: 1,   // mínimo para ser MEDIUM
+                rejections: 1,   // mínimo para ser considerado
                 touches: 1,
-                quality: 'MEDIUM',
+                quality: roundInfo.quality,
+                roundLevel: roundInfo.level,
+                magnitude: 0,
                 isWorn: false,
                 isFlipped: false
             })
@@ -438,6 +559,30 @@ function detectRoundNumberZones(candles) {
     }
 
     return zones
+}
+
+/**
+ * Clasifica un número redondo según su importancia psicológica.
+ * @param {number} price
+ * @returns {{ level: string, quality: string }}
+ */
+function classifyRoundNumber(price) {
+    // Convertir a entero en micropips (6 decimales) para analizar trailing zeros
+    const microPips = Math.round(price * 1e6)
+
+    if (microPips % 10000 === 0) {
+        // Terminación en .xx0000 → Nivel Maestro (e.g., 1.230000)
+        return { level: 'MASTER', quality: 'STRONG' }
+    } else if (microPips % 1000 === 0) {
+        // Terminación en .xxx000 → Nivel Fuerte (e.g., 1.234000)
+        return { level: 'STRONG', quality: 'MEDIUM' }
+    } else if (microPips % 500 === 0) {
+        // Terminación en .xxx500 → Nivel Medio (e.g., 1.234500)
+        return { level: 'MEDIUM', quality: 'MEDIUM' }
+    }
+
+    // Fallback (no debería llegar aquí con step 0.00050)
+    return { level: 'MINOR', quality: 'WEAK' }
 }
 
 // ============================================================
@@ -469,7 +614,7 @@ function checkLevelProximity(price, levels) {
 }
 
 // ============================================================
-// ZONA OBJETIVO (Target Zone)
+// ZONA OBJETIVO (Target Zone) — Solo niveles BLOQUEANTES
 // ============================================================
 
 /**
@@ -477,15 +622,15 @@ function checkLevelProximity(price, levels) {
  * "quiere llegar" desde su posición actual.
  *
  * Lógica:
- * - Si hay una señal de decisión (CALL/PUT), buscar el siguiente nivel relevante
- *   en esa dirección para evaluar si hay recorrido suficiente.
- * - Si el precio ya está en una zona, el objetivo es re-testear ese nivel.
+ * - Para CALL: busca RESISTANCE, KEY_ZONE o ROUND_NUMBER por encima (bloqueantes).
+ *   (Un SUPPORT por encima no es bloqueante para un CALL.)
+ * - Para PUT: busca SUPPORT, KEY_ZONE o ROUND_NUMBER por debajo (bloqueantes).
+ *   (Una RESISTANCE por debajo no es bloqueante para un PUT.)
  * - Retorna: el nivel objetivo + la distancia + si hay "espacio libre".
  *
  * @param {number} currentPrice  - precio actual
  * @param {string} direction     - 'CALL' | 'PUT' | null
  * @param {Array}  levels        - zonas activas
- * @param {Array}  candles       - para calcular el rango promedio de vela
  * @returns {Object} targetZone info
  */
 function getTargetZone(currentPrice, direction, levels) {
@@ -495,18 +640,26 @@ function getTargetZone(currentPrice, direction, levels) {
 
     const cfg = config.strategy.levels
 
-    // Buscar el nivel más cercano en la dirección de la operación
+    // Tipos de nivel que actúan como bloqueantes según la dirección
+    const blockingTypes = direction === 'CALL'
+        ? ['RESISTANCE', 'KEY_ZONE', 'ROUND_NUMBER']  // para CALL: bloqueantes arriba
+        : ['SUPPORT', 'KEY_ZONE', 'ROUND_NUMBER']     // para PUT: bloqueantes abajo
+
+    // Buscar el nivel bloqueante más cercano en la dirección de la operación
     let targetLevel = null
     let minDistance = Infinity
 
     for (const level of levels) {
+        // Solo considerar niveles que actúen como bloqueantes
+        if (!blockingTypes.includes(level.type)) continue
+
         let distance
 
         if (direction === 'CALL') {
-            // Para CALL: buscar nivel por ENCIMA (resistencia o key zone)
+            // Para CALL: buscar nivel por ENCIMA
             distance = level.price - currentPrice
         } else {
-            // Para PUT: buscar nivel por DEBAJO (soporte o key zone)
+            // Para PUT: buscar nivel por DEBAJO
             distance = currentPrice - level.price
         }
 
@@ -522,11 +675,6 @@ function getTargetZone(currentPrice, direction, levels) {
 
     // ¿Hay espacio suficiente? (al menos N pips = minTargetDistance)
     const hasSpace = minDistance >= cfg.minTargetDistance
-
-    // ¿El precio está "viajando hacia" el objetivo?
-    //   (el precio todavía tiene recorrido disponible = buena operación)
-    // ¿O está ya pegado al objetivo?
-    //   (poca distancia = el precio va a chocar pronto = mala operación)
 
     return {
         hasTarget: true,
