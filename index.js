@@ -51,11 +51,20 @@ async function handleNewCandle(API, candle) {
 			console.log(`\n[CANDLE] Nueva vela: ${candle.id} | ${candle.open} -> ${candle.close}`)
 			console.log('[STRATEGY] Calculando niveles S/R...')
 
+
 			// Calcular y cachear niveles S/R una sola vez por vela nueva
 			const currentCandles = getCandles()
 			const levels = getLevels(currentCandles)
 			setCachedLevels(levels)
 			console.log(`[LEVELS] ${levels.length} zonas activas calculadas`)
+			if (levels.length > 0) {
+				console.log('[LEVELS] Detalle de zonas activas:')
+				levels.forEach((lvl, idx) => {
+					console.log(`  ${idx + 1}. ${lvl.type} @ ${lvl.price.toFixed(6)} | zona: [${lvl.zoneBottom.toFixed(6)}, ${lvl.zoneTop.toFixed(6)}] | calidad: ${lvl.quality} | rechazos: ${lvl.rejections || lvl.touches || 0} | flip: ${lvl.isFlipped ? 'SI' : 'NO'} | desgastada: ${lvl.isWorn ? 'SI' : 'NO'}`)
+				})
+			} else {
+				console.log('[LEVELS] No hay zonas activas detectadas.')
+			}
 
 			console.log('[STRATEGY] Analizando...')
 			const decision = await analyzeStrategy(currentCandles, getTicks(), levels)
