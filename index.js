@@ -1,5 +1,5 @@
 const config = require('./config.js')
-const { loadActiveSchedule, reloadSchedulePeriodically } = require('./core/active.js')
+const { loadActiveSchedule } = require('./core/active.js')
 const { loadInitialCandles, addNewCandle, getCandles, addNewTick, clearTicks, getTicks, setCachedLevels } = require('./core/candles.js')
 const { getLevels } = require('./indicators/levels.js')
 const { analyzeStrategy } = require('./strategy/strategy-core.js')
@@ -17,9 +17,6 @@ async function initialize(API) {
 
 		console.log('[INIT] Cargando velas históricas...')
 		await loadInitialCandles(API, config.activePrincipal)
-
-		console.log('[INIT] Configurando recarga periódica del schedule...')
-		reloadSchedulePeriodically(API, 1) // Recarga cada 1 hora
 
 		console.log('[INIT] Suscribiéndose a generación de velas...')
 		API.onCandleGenerate(config.activePrincipal, async (candle) => {
