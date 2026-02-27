@@ -3,9 +3,9 @@ const path = require('path')
 const config = require('../config')
 
 // Archivo donde se guardarán los logs detallados (JSON Lines)
-const archive_name = `operations_${config.version}.json`
+const archive_name = `operations_${config.version}_${config.dia}.json`
 const LOG_FILE = path.join(__dirname, '../', archive_name)
-const SKIPPED_FILE = path.join(__dirname, '../', `skipped_${config.version}.json`)
+const SKIPPED_FILE = path.join(__dirname, '../', `skipped_${config.version}_${config.dia}.json`)
 
 async function addOperation(operation) {
 	saveOperationToFile(operation).catch(err => {
