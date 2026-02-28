@@ -2,10 +2,12 @@ const fs = require('fs').promises
 const path = require('path')
 const config = require('../config')
 
+let date = '27022026' // Formato DDMMYYYY, se puede parametrizar si se desea
+let sesion = 'S1'
 // Archivo donde se guardarán los logs detallados (JSON Lines)
-const archive_name = `operations_${config.version}_${config.dia}.json`
-const LOG_FILE = path.join(__dirname, '../', archive_name)
-const SKIPPED_FILE = path.join(__dirname, '../', `skipped_${config.version}_${config.dia}.json`)
+const archive_name = `operations_${config.version}_${date}.json`
+const LOG_FILE = path.join(__dirname, config.rep_directory, archive_name)
+const SKIPPED_FILE = path.join(__dirname, config.rep_directory, `skipped_${config.version}_${date}_${sesion}.json`)
 
 async function addOperation(operation) {
 	saveOperationToFile(operation).catch(err => {

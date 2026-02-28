@@ -2,7 +2,7 @@ require('dotenv').config();
 
 module.exports = {
 	version: "V4",
-	dia: "D4",
+	rep_directory: process.env.REP_DIRECTORY,
 	// Configuración de Estrategia LMTA
 	strategy: {
 		minTicks: 55, // Mínimo de ticks para analizar
