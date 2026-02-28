@@ -9,6 +9,7 @@ const { detectCandleSequence } = require('../indicators/sequences.js')
 const { checkMarketContext } = require('../indicators/market-context.js')
 const { getFibonacciZones, checkFibProximity } = require('../indicators/fibonacci.js')
 const { getVolumeEMA } = require('../core/candles.js')
+const { updateZoneZBuffer, checkZoneZProximity, getActiveZonesZ } = require('../indicators/zone-z.js')
 
 // Helper para logging detallado
 class AnalysisLogger {
@@ -184,6 +185,9 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 	const closePrice = ticks[ticks.length - 1]
 	const candleColor = closePrice > openPrice ? 'VERDE' : 'ROJA'
 
+	// MEJORA 8: Actualizar buffer de Zonas Z
+	updateZoneZBuffer(candles, closePrice)
+
 	logger.add(``)
 	logger.add(`[STEP 2] CONTEXTO DE MERCADO`)
 	logger.add(`─────────────────────────────────────────────────────────────`)
@@ -213,21 +217,57 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 		logger.add(`Patrones de vela: ${candlePatterns.join(', ')}`)
 	}
 
-	// === ANÁLISIS DE MECHAS EXTREMAS ===
-	// Penalizar si la vela actual o las últimas N tienen mechas largas respecto al cuerpo
-	const MECHA_LOOKBACK = 3;
-	const MECHA_RATIO_UMBRAL = 2.5; // Mecha > 2.5x cuerpo
-	let mechaExtremaDetectada = false;
-	if (candles.length >= MECHA_LOOKBACK) {
-		const recentCandles = candles.slice(-MECHA_LOOKBACK);
+	// MEJORA 10: FILTRO DE MERCADO SUCIO
+	// Si 60% de las últimas 10 velas tienen mecha > 2.5x cuerpo → mercado sucio
+	const DIRTY_MARKET_LOOKBACK = 10
+	const DIRTY_MARKET_THRESHOLD = 0.6
+	const DIRTY_MECHA_RATIO = 2.5
+	
+	if (candles.length >= DIRTY_MARKET_LOOKBACK) {
+		const recentCandles = candles.slice(-DIRTY_MARKET_LOOKBACK)
+		let dirtyCount = 0
+		
 		for (const c of recentCandles) {
-			const cuerpo = Math.abs(c.close - c.open);
-			const mechaSup = c.max - Math.max(c.close, c.open);
-			const mechaInf = Math.min(c.close, c.open) - c.min;
-			const mechaMax = Math.max(mechaSup, mechaInf);
+			const cuerpo = Math.abs(c.close - c.open)
+			if (cuerpo === 0) continue
+			
+			const mechaSup = c.max - Math.max(c.close, c.open)
+			const mechaInf = Math.min(c.close, c.open) - c.min
+			const mechaMax = Math.max(mechaSup, mechaInf)
+			
+			if (mechaMax / cuerpo > DIRTY_MECHA_RATIO) {
+				dirtyCount++
+			}
+		}
+		
+		const dirtyRatio = dirtyCount / DIRTY_MARKET_LOOKBACK
+		
+		if (dirtyRatio >= DIRTY_MARKET_THRESHOLD) {
+			logger.add(`[ABORT] MERCADO SUCIO: ${dirtyCount}/${DIRTY_MARKET_LOOKBACK} velas con mechas extremas (${(dirtyRatio * 100).toFixed(0)}%)`)
+			return {
+				shouldOperate: false,
+				direction: '',
+				reason: 'Mercado sucio (mechas excesivas)',
+				analysis: logger.getReport(),
+				candles: candles.slice(-20)
+			}
+		}
+	}
+
+	// === ANÁLISIS DE MECHAS EXTREMAS ===
+	const MECHA_LOOKBACK = 3
+	const MECHA_RATIO_UMBRAL = 2.5
+	let mechaExtremaDetectada = false
+	if (candles.length >= MECHA_LOOKBACK) {
+		const recentCandles = candles.slice(-MECHA_LOOKBACK)
+		for (const c of recentCandles) {
+			const cuerpo = Math.abs(c.close - c.open)
+			const mechaSup = c.max - Math.max(c.close, c.open)
+			const mechaInf = Math.min(c.close, c.open) - c.min
+			const mechaMax = Math.max(mechaSup, mechaInf)
 			if (cuerpo > 0 && (mechaSup / cuerpo > MECHA_RATIO_UMBRAL || mechaInf / cuerpo > MECHA_RATIO_UMBRAL)) {
-				mechaExtremaDetectada = true;
-				logger.add(`[MECHA] Vela con mecha extrema detectada (mecha/cuerpo > ${MECHA_RATIO_UMBRAL})`);
+				mechaExtremaDetectada = true
+				logger.add(`[MECHA] Vela con mecha extrema detectada (mecha/cuerpo > ${MECHA_RATIO_UMBRAL})`)
 			}
 		}
 	}
@@ -390,6 +430,19 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 		logger.add(`✓ Precio en zona Fibonacci ${(fibCheck.zone.fibLevel * 100).toFixed(1)}% @ ${fibCheck.zone.price.toFixed(6)}`)
 	}
 
+	// MEJORA 8: Zona Z
+	const zoneZCheck = checkZoneZProximity(closePrice)
+	const activeZonesZ = getActiveZonesZ()
+	if (activeZonesZ.length > 0) {
+		logger.add(`Zonas Z Institucionales activas: ${activeZonesZ.length}`)
+		activeZonesZ.forEach((z, idx) => {
+			logger.add(`  ${idx + 1}. Zona Z ${z.direction} @ ${z.price.toFixed(6)} [${z.zoneBottom.toFixed(6)}, ${z.zoneTop.toFixed(6)}] (${z.touches} toques)`)
+		})
+	}
+	if (zoneZCheck.isAtZoneZ) {
+		logger.add(`✓ Precio en ZONA Z INSTITUCIONAL @ ${zoneZCheck.zone.price.toFixed(6)} (${zoneZCheck.zone.direction})`)
+	}
+
 	// ==========================================
 	// LÓGICA DE DECISIÓN (Jerarquía LMTA)
 	// ==========================================
@@ -406,7 +459,15 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 		logger.add(``)
 		logger.add(`🎯 REGLA 1: Latigazo de Desesperación en Nivel`)
 
-		if (whiplashDirection === 'ALCISTA' && (levelCheck.level.type === 'RESISTANCE' || levelCheck.level.type === 'ROUND_NUMBER')) {
+		// MEJORA 7: Filtro de Aceleración - Bloquear reversiones si Fase 3 > 2.5x Fase 1
+		const accelerationRatio = phase1.velocity > 0 ? phase3.velocity / phase1.velocity : 0
+		if (accelerationRatio > 2.5) {
+			logger.add(`⚠️ FILTRO DE ACELERACIÓN: Velocidad F3 (${phase3.velocity.toFixed(6)}) > 2.5x F1 (${phase1.velocity.toFixed(6)})`)
+			logger.add(`   Ratio: ${accelerationRatio.toFixed(2)}x - "Tren en marcha", nivel será roto`)
+			logger.add(`   ✗ Reversión BLOQUEADA por aceleración excesiva`)
+			decision = 'WAIT'
+			reason = 'Bloqueado por aceleración (Tren en marcha)'
+		} else if (whiplashDirection === 'ALCISTA' && (levelCheck.level.type === 'RESISTANCE' || levelCheck.level.type === 'ROUND_NUMBER')) {
 			decision = 'PUT'
 			reason = 'Latigazo de desesperación contra resistencia'
 			confidence = 90
@@ -437,32 +498,56 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 		logger.add(`   Estancamiento: ${phase3.maxStagnation} ticks`)
 		logger.add(`   Tuvo Progreso Previo: ${phase3.hadProgress ? 'SÍ' : 'NO'}`)
 
-		const isValidContext = levelCheck.isAtLevel || phase3.maxStagnation >= 12
-
-		if (isValidContext) {
-			if (phase3.dominantGroup === 'COMPRADORES') {
-				decision = 'PUT'
-				reason = phase3.maxStagnation >= 12 ? 'Agotamiento extremo de compradores' : 'Agotamiento en nivel clave'
-				confidence = 75
-				logger.add(`   ✓ COMPRADORES agotados → VENTA`)
-
-				if (levelCheck.isAtLevel && levelCheck.level.quality === 'STRONG') {
-					confidence += 10
-					logger.add(`   ✓ Agotamiento en nivel FUERTE → +10% confianza`)
-				}
-			} else if (phase3.dominantGroup === 'VENDEDORES') {
-				decision = 'CALL'
-				reason = phase3.maxStagnation >= 12 ? 'Agotamiento extremo de vendedores' : 'Agotamiento en nivel clave'
-				confidence = 75
-				logger.add(`   ✓ VENDEDORES agotados → COMPRA`)
-
-				if (levelCheck.isAtLevel && levelCheck.level.quality === 'STRONG') {
-					confidence += 10
-					logger.add(`   ✓ Agotamiento en nivel FUERTE → +10% confianza`)
-				}
-			}
+		// MEJORA 7: Filtro de Aceleración - Bloquear reversiones si Fase 3 > 2.5x Fase 1
+		const accelerationRatio = phase1.velocity > 0 ? phase3.velocity / phase1.velocity : 0
+		if (accelerationRatio > 2.5) {
+			logger.add(`⚠️ FILTRO DE ACELERACIÓN: Velocidad F3 (${phase3.velocity.toFixed(6)}) > 2.5x F1 (${phase1.velocity.toFixed(6)})`)
+			logger.add(`   Ratio: ${accelerationRatio.toFixed(2)}x - "Tren en marcha", nivel será roto`)
+			logger.add(`   ✗ Reversión BLOQUEADA por aceleración excesiva`)
+			decision = 'WAIT'
+			reason = 'Bloqueado por aceleración (Tren en marcha)'
 		} else {
-			logger.add(`   ✗ Estancamiento sin nivel de apoyo → Ignorado (Tierra de Nadie)`)
+			const isValidContext = levelCheck.isAtLevel || phase3.maxStagnation >= 12
+
+			if (isValidContext) {
+				if (phase3.dominantGroup === 'COMPRADORES') {
+					decision = 'PUT'
+					reason = phase3.maxStagnation >= 12 ? 'Agotamiento extremo de compradores' : 'Agotamiento en nivel clave'
+					confidence = 75
+					logger.add(`   ✓ COMPRADORES agotados → VENTA`)
+
+					// MEJORA 4: Bonus por Fase 3 débil en Key Zone
+					const isKeyZone = levelCheck.isAtLevel && (levelCheck.level.type === 'KEY_ZONE' || levelCheck.level.isFlipped)
+					if (isKeyZone && phase3.velocity < phase1.velocity) {
+						confidence += 20
+						logger.add(`   ✓ Fase 3 débil en Key Zone (agotamiento confirmado) → +20% confianza`)
+					}
+
+					if (levelCheck.isAtLevel && levelCheck.level.quality === 'STRONG') {
+						confidence += 10
+						logger.add(`   ✓ Agotamiento en nivel FUERTE → +10% confianza`)
+					}
+				} else if (phase3.dominantGroup === 'VENDEDORES') {
+					decision = 'CALL'
+					reason = phase3.maxStagnation >= 12 ? 'Agotamiento extremo de vendedores' : 'Agotamiento en nivel clave'
+					confidence = 75
+					logger.add(`   ✓ VENDEDORES agotados → COMPRA`)
+
+					// MEJORA 4: Bonus por Fase 3 débil en Key Zone
+					const isKeyZone = levelCheck.isAtLevel && (levelCheck.level.type === 'KEY_ZONE' || levelCheck.level.isFlipped)
+					if (isKeyZone && phase3.velocity < phase1.velocity) {
+						confidence += 20
+						logger.add(`   ✓ Fase 3 débil en Key Zone (agotamiento confirmado) → +20% confianza`)
+					}
+
+					if (levelCheck.isAtLevel && levelCheck.level.quality === 'STRONG') {
+						confidence += 10
+						logger.add(`   ✓ Agotamiento en nivel FUERTE → +10% confianza`)
+					}
+				}
+			} else {
+				logger.add(`   ✗ Estancamiento sin nivel de apoyo → Ignorado (Tierra de Nadie)`)
+			}
 		}
 	}
 
@@ -511,13 +596,34 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 			logger.add(`   ✓ VENDEDORES fuertes → VENTA`)
 		}
 	}
+	
+	// MEJORA 4: JERARQUÍA 5 - Fase 3 Débil en Key Zone = Agotamiento (Reversión)
+	// IMPORTANTE: Solo agrega confianza si ya hay otros indicadores, NO opera por sí sola
+	// Esta lógica se aplica en JERARQUÍA 2 (Agotamiento) con el bonus de +20%
 
 	// Si no hay decisión clara
 	if (decision === 'WAIT') {
 		logger.add(``)
 		logger.add(`⚠️ Sin señal clara - Esperando mejor oportunidad`)
 		logger.add(`   Razones:`)
-		if (phase3.isWeak) logger.add(`   - Fase 3 muestra debilidad`)
+		
+		// MEJORA 4: Reclasificación Fase 3 Débil
+		// Si Fase 3 es débil EN Key Zone, es señal de agotamiento (reversión), no cancelación
+		if (phase3.isWeak && levelCheck.isAtLevel) {
+			const isKeyZone = levelCheck.level.type === 'KEY_ZONE' || levelCheck.level.isFlipped
+			const weaknessIsSignal = phase3.velocity < phase1.velocity
+			
+			if (isKeyZone && weaknessIsSignal) {
+				logger.add(`   ✓ Fase 3 débil en Key Zone (velocidad F3: ${phase3.velocity.toFixed(6)} < F1: ${phase1.velocity.toFixed(6)})`)
+				logger.add(`   ✓ Esto es AGOTAMIENTO, no debilidad - Señal de reversión`)
+				// No cancelar, agregar confianza si hay otros indicadores
+			} else if (phase3.isWeak) {
+				logger.add(`   - Fase 3 muestra debilidad (fuera de Key Zone)`)
+			}
+		} else if (phase3.isWeak) {
+			logger.add(`   - Fase 3 muestra debilidad`)
+		}
+		
 		if (levelCheck.isAtLevel && decision === 'WAIT') logger.add(`   - Precio en nivel pero sin señal de reversión`)
 		if (phase1.dominantGroup !== phase2.dominantGroup && exploitation === 'NONE') {
 			logger.add(`   - Cambio de dominio sin aprovechamiento claro`)
@@ -529,10 +635,20 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 	// ==========================================
 	// Se aplica DESPUÉS de tener una decisión base para que los refuerzos sean válidos
 	if (decision !== 'WAIT') {
-		// DOJI: cancela la operación por indecisión
+		// DOJI: EXCEPCIÓN - Si está en nivel STRONG/KEY_ZONE, es señal de agotamiento (no cancelar)
 		if (candlePatterns.includes('DOJI')) {
-			logger.add('⚠️ DOJI detectado: indecisión, se cancela la operación')
-			return { shouldOperate: false, direction: '', reason: 'Doji detectado (indecisión)', analysis: logger.getReport(), candles: candles.slice(-20) }
+			const isAtStrongLevel = levelCheck.isAtLevel && 
+				(levelCheck.level.quality === 'STRONG' || levelCheck.level.type === 'KEY_ZONE')
+			
+			if (isAtStrongLevel) {
+				// DOJI en nivel fuerte = AGOTAMIENTO (refuerza la reversión)
+				confidence += 10
+				logger.add('⚖️ DOJI en nivel fuerte: señal de agotamiento +10% confianza')
+			} else {
+				// DOJI sin nivel fuerte = INDECISIÓN (cancelar)
+				logger.add('⚠️ DOJI detectado: indecisión, se cancela la operación')
+				return { shouldOperate: false, direction: '', reason: 'Doji detectado (indecisión)', analysis: logger.getReport(), candles: candles.slice(-20) }
+			}
 		}
 
 		// Doble Techo/Suelo
@@ -554,6 +670,12 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 		if (fibCheck.isAtFib && (fibCheck.zone.fibLevel === 0.500 || fibCheck.zone.fibLevel === 0.618)) {
 			confidence += 10
 			logger.add(`📌 Fibonacci ${(fibCheck.zone.fibLevel * 100).toFixed(0)}%: +10% confianza`)
+		}
+
+		// MEJORA 8: Zona Z - Bonus si está en Zona Z institucional
+		if (zoneZCheck.isAtZoneZ) {
+			confidence += 15
+			logger.add(`🎯 Zona Z Institucional (${zoneZCheck.zone.direction}): +15% confianza`)
 		}
 
 		// Secuencia de velas del mismo color
@@ -624,7 +746,27 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 		logger.add(`[STEP 8] FILTRO DE CONTEXTO DE MERCADO`)
 		logger.add(`─────────────────────────────────────────────────────────────`)
 
-		const contextCheck = checkMarketContext(decision, candles, levels, trendInfo, closePrice)
+		// FILTRO DE INCLINACIÓN ESTRUCTURAL (Tendencia muy vertical)
+		// Si la tendencia es FUERTE (>60°) y dominantRatio > 75%, bloquear reversiones
+		if (trendInfo.strength === 'FUERTE' && trendInfo.dominantRatio > 0.75) {
+			// Verificar si la decisión es una REVERSIÓN (contra la tendencia)
+			const isReversal = 
+				(decision === 'CALL' && trendInfo.direction === 'BAJISTA') ||
+				(decision === 'PUT' && trendInfo.direction === 'ALCISTA')
+			
+			if (isReversal) {
+				logger.add(`❌ INCLINACIÓN ESTRUCTURAL: Tendencia ${trendInfo.direction} muy vertical (${(trendInfo.dominantRatio * 100).toFixed(0)}%)`)
+				logger.add(`   Reversión bloqueada - El precio tiene inercia fuerte`)
+				decision = 'WAIT'
+				reason = 'Bloqueado por inclinación estructural (tendencia >60°)'
+				confidence = 0
+			}
+		}
+
+		if (decision === 'WAIT') {
+			logger.add(`✗ Operación CANCELADA por filtro de inclinación`)
+		} else {
+			const contextCheck = checkMarketContext(decision, candles, levels, trendInfo, closePrice)
 
 		if (!contextCheck.allowed) {
 			contextCheck.blocks.forEach(block => logger.add(`❌ ${block}`))
@@ -634,6 +776,7 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 			logger.add(`✗ Operación CANCELADA por filtro de contexto`)
 		} else {
 			logger.add(`✓ Contexto de mercado favorable - Proceder`)
+		}
 		}
 	}
 
@@ -721,9 +864,21 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 	logger.add(`Confianza: ${confidence}%`)
 	logger.add(``)
 
+	// Determinar tipo de operación (REVERSAL o CONTINUITY)
+	let operationType = 'REVERSAL' // Por defecto
+	if (decision !== 'WAIT') {
+		// Es continuidad si las 3 fases tienen el mismo dominio y no hay nivel bloqueante
+		if (phase1.dominantGroup === phase2.dominantGroup && 
+			phase2.dominantGroup === phase3.dominantGroup && 
+			!levelCheck.isAtLevel) {
+			operationType = 'CONTINUITY'
+		}
+	}
+
 	return {
 		shouldOperate: decision !== 'WAIT',
 		direction: decision === 'WAIT' ? '' : decision,
+		operationType: operationType,
 		reason: reason,
 		confidence: confidence,
 		analysis: logger.getReport(),
@@ -743,7 +898,9 @@ const analyzeStrategy = async (candles, ticks, levels = []) => {
 				phase2: { ...phase2, ticks: phase2Ticks.length },
 				phase3: { ...phase3, ticks: phase3Ticks.length }
 			},
-			exploitation
+			exploitation,
+			zoneZ: zoneZCheck,
+			activeZonesZ: activeZonesZ.length
 		}
 	}
 }

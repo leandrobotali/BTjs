@@ -7,11 +7,22 @@ const { executeOperation, isOperating } = require('./operations/trade.js')
 const { addOperation, checkAndSaveHourly, addSkipped } = require('./reports/manager.js')
 const SimpleMutex = require('./core/mutex.js')
 const { checkActiveBeforeOperation } = require('./core/active.js')
+const { initScheduler } = require('./core/scheduler.js')
+const { startWaitingForEntry, checkEntryPoint, getStoredDecision, isWaitingForEntry, resetEntryPointState } = require('./operations/entry-point.js')
 
 const callbackMutex = new SimpleMutex()
 
 async function initialize(API) {
 	try {
+		console.log('\n[INIT] Inicializando scheduler de tareas programadas...')
+		const shouldContinue = initScheduler(API, initialize)
+		
+		// Si el mercado está cerrado, no continuar con la inicialización
+		if (!shouldContinue) {
+			console.log('[INIT] ⏸️ Inicialización pausada - Esperando apertura de mercado')
+			return
+		}
+		
 		console.log('\n[INIT] Cargando información del activo...')
 		await loadActiveSchedule(API)
 
@@ -43,14 +54,66 @@ async function handleNewCandle(API, candle) {
 			/* si no se agrego una nueva vela, almacenamos el tick en el array  */
 			addNewTick(candle.close)
 			setLastStatusCandle(candle) // guardar volumen del ultimo tick de la vela en curso
+
+			// MEJORA 6: Verificar punto de entrada si está esperando
+			if (isWaitingForEntry()) {
+				const entryCheck = checkEntryPoint(candle.close)
+				
+				if (entryCheck.reached) {
+					// Precio alcanzó el punto de entrada, ejecutar operación
+					const storedDecision = getStoredDecision()
+					console.log('[ENTRY_POINT] Ejecutando operación en punto de entrada protector')
+					resetEntryPointState()
+					
+					// Ejecutar y guardar operación
+					const operationResult = await executeOperation(API, storedDecision)
+					if (operationResult) {
+						addOperation(operationResult)
+						console.log('[ENTRY_POINT] Operación ejecutada y guardada')
+					}
+				} else if (entryCheck.shouldAbort) {
+					// Timeout: precio no llegó al punto de entrada
+					const storedDecision = getStoredDecision()
+					console.log(`[ENTRY_POINT] ${entryCheck.reason}`)
+					console.log(`[ENTRY_POINT] Precio objetivo: ${entryCheck.details.targetPrice}, Precio alcanzado: ${entryCheck.details.currentPrice}`)
+					
+					// Guardar en skipped con razón detallada
+					const skippedDecision = {
+						...storedDecision,
+						reason: entryCheck.reason,
+						entryPointDetails: entryCheck.details
+					}
+					addSkipped(skippedDecision)
+					resetEntryPointState()
+				}
+			}
 		} else {
 			newCandle = true
 			/* si se agrego una nueva vela, procesamos la operación */
-			// console.log('candleee : ', candle);
 
-			// console.log(`\n[CANDLE] Nueva vela: ${candle.id} | ${candle.open} -> ${candle.close}`)
+			// MEJORA 6: Si está esperando punto de entrada y se acabó el tiempo, abortar
+			if (isWaitingForEntry()) {
+				console.log('[ENTRY_POINT] Nueva vela iniciada - Timeout de punto de entrada')
+				const storedDecision = getStoredDecision()
+				const lastTick = getTicks()[getTicks().length - 1] || candle.close
+				
+				// Guardar en skipped
+				const skippedDecision = {
+					...storedDecision,
+					reason: `⚠️ Precio no alcanzó punto de entrada protector (timeout al finalizar vela)`,
+					entryPointDetails: {
+						targetPrice: 'N/A',
+						currentPrice: lastTick.toFixed(6),
+						elapsed: '60+ segundos',
+						operationType: 'TIMEOUT'
+					}
+				}
+				addSkipped(skippedDecision)
+				resetEntryPointState()
+				console.log('[ENTRY_POINT] Estado reseteado - Continuando con análisis normal')
+			}
+
 			console.log('[STRATEGY] Calculando niveles S/R...')
-
 
 			// Calcular y cachear niveles S/R una sola vez por vela nueva
 			const currentCandles = getCandles()
@@ -88,7 +151,10 @@ async function handleNewCandle(API, candle) {
 			}
 
 			if (decision.shouldOperate) {
-				executeOperation(API, decision)
+				// MEJORA 6: En lugar de ejecutar inmediatamente, esperar punto de entrada
+				const previousCandle = currentCandles[currentCandles.length - 1]
+				startWaitingForEntry(decision, previousCandle)
+				console.log('[DECISION] Se debe operar - Esperando punto de entrada protector')
 			} else {
 				console.log('[DECISION] No se opera en esta vela')
 				addSkipped(decision)

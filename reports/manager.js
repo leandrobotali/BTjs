@@ -65,10 +65,16 @@ function getOperationsBuffer() {
 	return []
 }
 
+function clearOperationsBuffer() {
+	// No hay buffer en memoria, pero se puede usar para limpiar archivos si es necesario
+	console.log('[REPORTS] Buffer de operaciones limpiado')
+}
+
 module.exports = {
 	addOperation,
 	addSkipped,
 	checkAndSaveHourly,
 	saveHourlyReport,
-	getOperationsBuffer
+	getOperationsBuffer,
+	clearOperationsBuffer
 }

@@ -73,47 +73,37 @@ const detectDangerousMarket = (candles, ticks = []) => {
 
 /**
  * MERCADO SUCIO: Velas con exceso de mechas en AMBAS direcciones de forma consistente.
+ * Mejora 10: Si en las últimas 10 velas, el 60% tiene una mecha > 2.5x el tamaño del cuerpo,
+ * el bot debe desactivarse automáticamente por DIRTY_MARKET.
+ * 
  * Esto NO es un Pin Bar aislado (que es una señal válida).
- * Es cuando VARIAS velas consecutivas tienen mechas grandes en ambos lados = confusión.
- * Referencia: "Exceso de Mechas: Velas con cuerpos pequeños y mechas largas en ambas
- * direcciones indican confusión y falta de rumbo fijo."
+ * Es cuando VARIAS velas consecutivas tienen mechas grandes = confusión.
  */
 const checkDirtyMarket = (candles) => {
     const cfg = config.strategy.dangerousMarkets.dirtyMarket
-    const recent = candles.slice(-cfg.lookback) // últimas N velas
+    const recent = candles.slice(-cfg.lookback) // últimas 10 velas
 
     let dirtyCount = 0
 
     for (const c of recent) {
-        const totalSize = c.max - c.min
-        if (totalSize < 0.000005) continue // ignorar velas planas
-
         const bodySize = Math.abs(c.close - c.open)
         const upperWick = c.max - Math.max(c.open, c.close)
         const lowerWick = Math.min(c.open, c.close) - c.min
+        const maxWick = Math.max(upperWick, lowerWick)
 
-        // Una vela "sucia" tiene:
-        // 1. Cuerpo pequeño (< 30% del total)
-        // 2. Mechas significativas en AMBOS lados
-        const bodyRatio = bodySize / totalSize
-        const upperWickRatio = upperWick / totalSize
-        const lowerWickRatio = lowerWick / totalSize
-
-        const isSmallBody = bodyRatio < cfg.maxBodyRatio         // cuerpo pequeño
-        const hasBothWicks = upperWickRatio > cfg.minWickRatio   // mecha superior significativa
-            && lowerWickRatio > cfg.minWickRatio   // mecha inferior significativa
-
-        if (isSmallBody && hasBothWicks) {
+        // Mejora 10: Mecha > 2.5x cuerpo
+        if (bodySize > 0.000001 && maxWick > bodySize * cfg.mechaBodyRatio) {
             dirtyCount++
         }
     }
 
     const dirtyRatio = dirtyCount / recent.length
 
+    // Mejora 10: Si 60%+ de velas tienen mecha > 2.5x cuerpo → DIRTY_MARKET
     if (dirtyRatio >= cfg.minDirtyRatio) {
         return {
             isDetected: true,
-            message: `${dirtyCount}/${recent.length} velas con mechas en ambos lados (${(dirtyRatio * 100).toFixed(0)}%). Mercado sin rumbo claro.`
+            message: `${dirtyCount}/${recent.length} velas con mecha > 2.5x cuerpo (${(dirtyRatio * 100).toFixed(0)}%). Mercado con ruido excesivo.`
         }
     }
 

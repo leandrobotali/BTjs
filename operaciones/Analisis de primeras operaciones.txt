@@ -637,3 +637,188 @@ Acción: Eliminar el bloqueo por RETEST_BLOCK exclusivamente si la zona es ident
 Problema detectado: El bot a veces opera en mercados con mechas excesivas que generan resultados aleatorios.
 Mejora: Definir matemáticamente el Ratio de Ruido.
 Acción: Si en las últimas 10 velas, el 60% tiene una mecha > 2.5x el tamaño del cuerpo, el bot debe desactivarse automáticamente por DIRTY_MARKET.
+
+
+Dudas Antes de Comenzar:
+Duda 1: Mejora 3 (Ventana Operativa)
+¿Prefieres mi sugerencia de flag isTradingHours() o tu idea original de crons que desconectan/reconectan?
+
+Ventajas del flag:
+
+No pierde conexión con broker
+
+Más simple de debuggear
+
+Sigue acumulando velas históricas
+
+Ventajas de tu propuesta:
+
+Limpieza total de estado
+
+Menor consumo de recursos fuera de horario
+
+
+Respuesta: prefiero mi propuesta. La razon principal es que los eventos que llegan por websocket cuando el bot esta inscripto en la generacion de velas, dejan de enviarse los dias viernes cerca de las 17hs (el activo cierra a las 16hs), por lo que el bot se cuelca, y deja de responder. incluso los lunes, cuando se comienzan a generar velas nuevamente, el bot continua colgado. por lo que tengo que apagarlo y reejecutarlo.
+
+Duda 2: Mejora 6 (Regla 50%/25%)
+Cuando el bot entra en "WAITING_ENTRY_POINT":
+
+¿Debe seguir guardando los ticks en el buffer de LMTA?
+
+¿O solo monitorear precio actual vs precio objetivo?
+
+Mi sugerencia: Solo monitorear precio, no re-analizar LMTA cada tick (ya se decidió operar).
+
+respuesta: el bot debe seguir almacenando los ticks en bufer, para evaluar si operar en la siguiente vela, o almacenar la operacion en skipped como hasta ahora. pero mientras almacena los ticks(como lo hace hoy), evalua el precio y espera un punto de entrada determinado.
+la estrategia se analiza unicamente al finalizar la vela anterior y comenzar la actual, como se hace actualmente, pero si el bot determina que se debe operar, no lo hace automaticamente, espera un mejor punto de entrada en los primeros 25segundos de la vela siguiente. la estrategia no se "re-analiza" en cada tick, el bot ya determinó que debe operar y en que dirección. solo espera el mejor punto de entrada, mientras continua con su funcionamiento normal.
+recorda que si el precio llega al punto de entrada necesario, el bot opera, si no llega, el bot no opera. En cualquiera de los dos caso, el bot debe guardar la decision como lo hace hoy, para luego Analizar sus decisiones.
+
+Duda 3: Mejora 8 (Zona Z)
+¿Cuántas Zonas Z máximo mantener en memoria? (ej: últimas 5)
+
+¿Invalidar Zona Z después del primer toque o mantenerla activa?
+
+¿Qué define "vela grande"? (ej: > 1.5x promedio últimas 20 velas)
+
+respuesta: me parece correcto, mantener solo las ultimas 5. luego del primer toque, la zona sigue siendo activa, se puede invalidar luego del 2 toque.
+Una vela grande se define como aquella que tiene un cuerpo o mecha mayor a 1.5 veces el promedio de las últimas 20 velas. Esto indica una inyección de capital institucional significativa, lo que hace que esa zona sea relevante para futuras operaciones.
+
+Duda 4: Arquitectura
+¿Dónde implementar cada mejora?
+
+Mejora 4, 5, 7, 10 → strategy/lmta-strategy.js
+
+Mejora 6 → operations/trade.js (nuevo módulo entry-point.js?)
+
+Mejora 8, 9 → indicators/ (nuevo zone-z.js?)
+
+Mejora 1, 2, 3 → index.js o nuevo scheduler.js?
+
+respuesta: modifica todos los lugares que consideres necesario modificar para que cada mejora se aplique exactamente como lo describimos. si tenes alguna duda o conflicto en modificar algun archivo, decime y lo resolvemos, no modifiques codigo si tenes dudas.
+
+
+
+Duda Final 1: Mejora 3 - Implementación de Desconexión/Reconexión
+Entiendo que quieres desconectar completamente. Necesito confirmar la estrategia:
+
+Viernes 16:00:
+
+Remover listener de velas (API.unsubscribeFromCandles() o similar)
+
+Limpiar buffer de velas (clearCandles())
+
+Limpiar operaciones en memoria
+
+¿Cerrar conexión WebSocket completamente o solo desuscribirse?
+
+¿Detener el proceso Node.js o dejarlo "dormido"?
+
+Lunes 00:00:
+
+¿Ejecutar main.js completo (reconectar, login, cargar historial)?
+
+¿O solo reconectar y reanudar desde donde estaba?
+
+Mi sugerencia:
+
+Viernes: Desuscribirse + limpiar estado + cerrar WebSocket
+
+Lunes: Ejecutar main.js completo (conexión limpia)
+
+Usar node-cron dentro del bot para gestionar esto
+
+¿Es correcto?
+
+respuesta: Me parece correcto, mi unica duda es, "cuando decis "ejecutar main.js" queres decir que ejecutas el codigo dentro del archivono? es decir, el bot nunca se "apaga", solo se pone a "dormir", y arranca de 0 los dias lunes no?
+
+🔴 Duda Final 2: Mejora 6 - Guardar Decisión en Skipped
+Cuando el bot decide operar pero el precio NO llega al punto de entrada en 25 segundos:
+
+¿Qué guardar en el archivo de operaciones NO realizadas?
+
+Opción A:
+
+Razón: ⚠️ Precio no alcanzó punto de entrada protector (50% mecha)
+Precio objetivo: 1.23450
+Precio alcanzado: 1.23470
+Tiempo esperado: 25 segundos
+
+Copy
+Opción B:
+
+Razón: ⚠️ El tren se fue - Sin retroceso al punto de entrada
+
+Copy
+Opción C: Otra razón que prefieras
+
+¿Cuál prefieres? Necesito saber para el formato del log.
+
+Respuesta: opcion A
+🔴 Duda Final 3: Mejora 4 - Reclasificación Fase 3 Débil
+Actualmente el bot cancela si "Fase 3 muestra debilidad". Con la mejora:
+
+¿La lógica es:
+
+Opción A (Inversión total):
+
+// ANTES: Fase 3 débil → CANCELAR
+// AHORA: Fase 3 débil en Key Zone → OPERAR (aumentar confianza)
+if (enKeyZone && velocidadF3 < velocidadF1) {
+  // SEÑAL DE REVERSIÓN - Aumentar confianza +20%
+  operar = true
+}
+
+Copy
+javascript
+Opción B (Condicional):
+
+// Solo operar si ADEMÁS hay otros indicadores positivos
+if (enKeyZone && velocidadF3 < velocidadF1 && hayOtrosIndicadores) {
+  operar = true
+} else if (velocidadF3 < velocidadF1 && !enKeyZone) {
+  // Cancelar si no está en Key Zone
+  cancelar = true
+}
+
+Copy
+javascript
+¿Cuál es la lógica correcta? ¿La Fase 3 débil en Key Zone es suficiente por sí sola o debe combinarse con otros indicadores?
+
+📋 Resumen de lo que haré (si confirmas):
+Mejora 1-2: Crear core/scheduler.js con node-cron para gestionar date/sesion
+
+Mejora 3: Implementar desconexión/reconexión automática en index.js
+
+Mejora 4: Modificar lógica en strategy/lmta-strategy.js (necesito aclaración)
+
+Mejora 5: Cambiar SPACE_BLOCK de 30 a 15 pips en strategy/lmta-strategy.js
+
+Mejora 6: Crear operations/entry-point.js para monitoreo de precio + modificar index.js callback
+
+Mejora 7: Agregar filtro aceleración en strategy/lmta-strategy.js
+
+Mejora 8: Crear indicators/zone-z.js para detectar/gestionar Zonas Z
+
+Mejora 9: Modificar validación de Key Zones en strategy/lmta-strategy.js
+
+Mejora 10: Agregar filtro mercado sucio en strategy/lmta-strategy.js
+
+Una vez aclares las 3 dudas finales, tengo todo claro para comenzar. ¿Puedes responderlas?
+
+entiendo que Lo que debería pasar:
+
+Vela N finaliza → Analiza → Decide operar → Entra en WAITING_ENTRY_POINT
+
+Vela N+1 (0-25s) → Almacena ticks + Busca punto de entrada
+
+Si llega al precio → Opera
+
+Si NO llega → Aborta y guarda en skipped
+
+Vela N+1 (60s) → la entrada anterior ya paso, si ejecuto una operacion, lamisma finalizo al segundo 60 de N +1, por lo que podria reanalizar y operar nuevamente si se da el analisis y la confianza
+
+no, la operacion finaliza al cerrar la vela N +1( en la que se espera un mejor punto de entrada)
+ejemplo, se opera en el segundo 20 de la vela N +1 , en el segundo 60 de dicha vela, se cierra la operacion
+se opera en el segundo 35 de N +1, la operacion se cierra en el segundo 60 de N +2
+
+no, la operacion cierra cuando la vela actual cierra, si dicha operacion se ejecuta antes del segundo 30 de dica vela. Si la operacion se ejecuta luego del segundo 30 de la vela actual, dicha operacion cierra en el segundo 60 de la vela siguiente. por este motivo, es que el bot tiene hasta el segundo 25 para buscar un mejor punto de entrada (calculando una demora en la ejecucuion de la operacion), si la operacion a ejecutar entraria despues del segundo 30 de la vela a opera, se cerraria en la siguiente vela, y no valdria de nada el analisis se entinede?. si no entendes bien esto, no toques el codigo y preguntame

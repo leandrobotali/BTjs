@@ -118,6 +118,17 @@ function clearTicks() {
 	return
 }
 
+function clearCandles() {
+	candles = []
+	ticks = []
+	lastCandleId = null
+	lastSaveCandleId = null
+	cachedLevels = []
+	lastStatusCandle = {}
+	volumeEMA = null
+	console.log('[CANDLES] Estado limpiado completamente')
+}
+
 function getTicks() {
 	return [...ticks]
 }
@@ -155,6 +166,7 @@ module.exports = {
 	getLastCandles,
 	addNewTick,
 	clearTicks,
+	clearCandles,
 	getTicks,
 	getCachedLevels,
 	setCachedLevels,

@@ -81,28 +81,21 @@ const checkTrendStrength = (decision, trendInfo) => {
 /**
  * FILTRO 2: ESPACIO LIBRE HASTA EL PRÓXIMO NIVEL
  *
+ * MEJORA 5: Espacio mínimo fijo de 15 pips (antes era 30 pips relativos).
  * Si hay un nivel de bloqueo muy cerca en la dirección de la operación,
- * no hay "recorrido" disponible para el precio. Operar sería abrir en el centro
- * de un rango, sin ventaja.
- *
- * Referencia: "filtro_proximidad_zona(): Si una vela de continuidad cierra muy cerca
- * de una zona clave, el bot debe cancelar la operación, ya que no hay espacio."
+ * no hay "recorrido" disponible para el precio.
  *
  * @param {string} decision    - 'CALL' | 'PUT'
  * @param {Array}  levels      - niveles detectados
  * @param {number} closePrice  - precio actual
- * @param {Array}  candles     - para calcular el tamaño promedio de vela
+ * @param {Array}  candles     - para referencia (no usado en versión fija)
  * @returns {string|null}
  */
 const checkFreeSpace = (decision, levels, closePrice, candles) => {
     if (!levels || levels.length === 0) return null
 
     const cfg = config.strategy.marketContext.freeSpace
-
-    // Calcular el "tamaño promedio de vela" para usarlo como referencia de espacio
-    const recentCandles = candles.slice(-cfg.candlesForSize)
-    const avgCandleSize = recentCandles.reduce((sum, c) => sum + (c.max - c.min), 0) / recentCandles.length
-    const minSpace = avgCandleSize * cfg.minSpaceInCandles
+    const minSpace = cfg.minSpacePips // 15 pips fijos
 
     // Buscar el nivel más cercano EN la dirección de la operación
     let nearestBlockingLevel = null
@@ -138,6 +131,9 @@ const checkFreeSpace = (decision, levels, closePrice, candles) => {
  * SIN que hubieran velas de "aire" (de respiro) en el medio, es señal de que
  * el nivel va a ser roto, no respetado.
  *
+ * MEJORA 9: Las Key Zones (Flip) son excepciones. Pueden aguantar más de 5 testeos
+ * sin desgastarse porque representan cambio de polaridad institucional.
+ *
  * Referencia: "Si el bot ya ejecutó una operación exitosa en esa zona e inmediatamente
  * el precio vuelve a bajar, no debe volver a comprar. La insistencia indica peligro de ruptura."
  *
@@ -159,6 +155,11 @@ const checkImmediateRetest = (decision, candles, levels, closePrice) => {
     )
 
     if (!nearestLevel) return null
+
+    // MEJORA 9: Si tiene FLIP (cambio de polaridad), NO aplicar RETEST_BLOCK
+    if (nearestLevel.isFlipped) {
+        return null // Key Zones (Flip) pueden aguantar más de 5 testeos sin desgastarse
+    }
 
     // Revisar las últimas N velas para ver si el precio ya tocó este nivel
     const recentCandles = candles.slice(-cfg.lookback)

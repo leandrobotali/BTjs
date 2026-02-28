@@ -34,7 +34,7 @@ module.exports = {
 			proximity: 0.000060,      // ±6 pips para considerar "precio en zona"
 
 			// Zona objetivo (Target Zone)
-			minTargetDistance: 0.000080  // Distancia mínima para que haya "espacio" hasta el objetivo
+			minTargetDistance: 0.000015  // Distancia mínima para que haya "espacio" hasta el objetivo (15 pips para binarias)
 		},
 		naturality: {
 			ratioThreshold: 2.0 // Ratio para considerar movimiento irregular (> 2x)
@@ -55,10 +55,11 @@ module.exports = {
 			// (NO bloquea Pin Bars, solo bloquea cuando TODO el mercado es confuso)
 			dirtyMarket: {
 				enabled: true,
-				lookback: 8,         // Cuántas velas recientes analizar
+				lookback: 10,        // Cuántas velas recientes analizar (Mejora 10: 10 velas)
 				maxBodyRatio: 0.30,  // Cuerpo < 30% del total = vela sucia
 				minWickRatio: 0.15,  // Mecha en cada lado > 15% del total
-				minDirtyRatio: 0.60  // Si 60%+ de las velas son sucias → bloquear
+				minDirtyRatio: 0.60, // Si 60%+ de las velas son sucias → bloquear (Mejora 10)
+				mechaBodyRatio: 2.5  // Mejora 10: Mecha > 2.5x cuerpo
 			},
 			// Micro-Rangos: alternancia sin dirección
 			microRange: {
@@ -110,8 +111,7 @@ module.exports = {
 			// Bloquea operaciones sin espacio libre hasta el próximo nivel
 			freeSpace: {
 				enabled: true,
-				candlesForSize: 10,    // Velas para calcular tamaño promedio
-				minSpaceInCandles: 1.5 // Espacio mínimo = 1.5x tamaño promedio de vela
+				minSpacePips: 0.000150 // MEJORA 5: Espacio mínimo = 15 pips fijos
 			},
 			// Bloquea re-testeos inmediatos (precio insistiendo en nivel = va a romper)
 			retest: {

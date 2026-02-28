@@ -44,6 +44,20 @@ cd BTjs
 node main.js
 ```
 
+### ⚠️ Inicio en Horario de Mercado Cerrado
+
+Si ejecutas el bot cuando el mercado está cerrado (sábado, domingo, o viernes después de las 16:00):
+
+- ✅ El bot se conecta al broker
+- ✅ Configura los crons automáticos
+- ⏸️ **Entra en modo DORMIDO** (no carga velas ni se suscribe)
+- 🟢 **Lunes 00:00** → Se activa automáticamente
+
+Para verificar el estado actual:
+```bash
+node test-scheduler.js
+```
+
 ## ⚙️ Configuración (.env)
 
 ```env
