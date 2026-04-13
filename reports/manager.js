@@ -2,7 +2,19 @@ const fs = require('fs').promises
 const path = require('path')
 const config = require('../config')
 
-let date = '27022026' // Formato DDMMYYYY, se puede parametrizar si se desea
+// Función para obtener la fecha del día siguiente en formato DDMMYYYY
+function getNextDayDate() {
+	const tomorrow = new Date()
+	tomorrow.setDate(tomorrow.getDate() + 1)
+
+	const day = String(tomorrow.getDate()).padStart(2, '0')
+	const month = String(tomorrow.getMonth() + 1).padStart(2, '0')
+	const year = tomorrow.getFullYear()
+
+	return `${day}${month}${year}`
+}
+
+let date = getNextDayDate() // Formato DDMMYYYY, se puede parametrizar si se desea
 let sesion = 'S1'
 // Archivo donde se guardarán los logs detallados (JSON Lines)
 const archive_name = `operations_${config.version}_${date}.json`
@@ -70,11 +82,23 @@ function clearOperationsBuffer() {
 	console.log('[REPORTS] Buffer de operaciones limpiado')
 }
 
+function setDate() {
+	// Setea el valor de la variable date
+	date = getNextDayDate()
+}
+
+function setSesion(sesion) {
+	// Setea el valor de la variable sesion
+	sesion = sesion
+}
+
 module.exports = {
 	addOperation,
 	addSkipped,
 	checkAndSaveHourly,
 	saveHourlyReport,
 	getOperationsBuffer,
-	clearOperationsBuffer
+	clearOperationsBuffer,
+	setDate,
+	setSesion
 }
