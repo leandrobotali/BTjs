@@ -38,7 +38,7 @@ async function executeOperation(API, decision) {
 		console.log('[OPERATION] Orden abierta, esperando cierre...')
 
 		await order.close()
-
+		console.log('[OPERATION] Orden cerrada', order)
 		const result = order.quote.win ? 'WIN' : 'LOSS'
 		const profit = order.quote.win ? order.quote.profit : -parseFloat(config.inversion)
 

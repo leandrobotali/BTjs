@@ -4,7 +4,7 @@ const { loadInitialCandles, addNewCandle, getCandles, addNewTick, clearTicks, ge
 const { getLevels } = require('./indicators/levels.js')
 const { analyzeStrategy } = require('./strategy/strategy-core.js')
 const { executeOperation, isOperating } = require('./operations/trade.js')
-const { addOperation, checkAndSaveHourly, addSkipped } = require('./reports/manager.js')
+const { addOperation, checkAndSaveHourly, addSkipped, printStats } = require('./reports/manager.js')
 const SimpleMutex = require('./core/mutex.js')
 const { checkActiveBeforeOperation } = require('./core/active.js')
 const { initScheduler } = require('./core/scheduler.js')
@@ -16,13 +16,13 @@ async function initialize(API) {
 	try {
 		console.log('\n[INIT] Inicializando scheduler de tareas programadas...')
 		const shouldContinue = initScheduler(API, initialize)
-		
+
 		// Si el mercado está cerrado, no continuar con la inicialización
 		if (!shouldContinue) {
 			console.log('[INIT] ⏸️ Inicialización pausada - Esperando apertura de mercado')
 			return
 		}
-		
+
 		console.log('\n[INIT] Cargando información del activo...')
 		await loadActiveSchedule(API)
 
@@ -58,25 +58,24 @@ async function handleNewCandle(API, candle) {
 			// MEJORA 6: Verificar punto de entrada si está esperando
 			if (isWaitingForEntry()) {
 				const entryCheck = checkEntryPoint(candle.close)
-				
+
 				if (entryCheck.reached) {
 					// Precio alcanzó el punto de entrada, ejecutar operación
 					const storedDecision = getStoredDecision()
 					console.log('[ENTRY_POINT] Ejecutando operación en punto de entrada protector')
 					resetEntryPointState()
-					
+
 					// Ejecutar y guardar operación
 					const operationResult = await executeOperation(API, storedDecision)
 					if (operationResult) {
-						addOperation(operationResult)
-						console.log('[ENTRY_POINT] Operación ejecutada y guardada')
+						console.log('[ENTRY_POINT] Operación ejecutada')
 					}
 				} else if (entryCheck.shouldAbort) {
 					// Timeout: precio no llegó al punto de entrada
 					const storedDecision = getStoredDecision()
 					console.log(`[ENTRY_POINT] ${entryCheck.reason}`)
 					console.log(`[ENTRY_POINT] Precio objetivo: ${entryCheck.details.targetPrice}, Precio alcanzado: ${entryCheck.details.currentPrice}`)
-					
+
 					// Guardar en skipped con razón detallada
 					const skippedDecision = {
 						...storedDecision,
@@ -96,7 +95,7 @@ async function handleNewCandle(API, candle) {
 				console.log('[ENTRY_POINT] Nueva vela iniciada - Timeout de punto de entrada')
 				const storedDecision = getStoredDecision()
 				const lastTick = getTicks()[getTicks().length - 1] || candle.close
-				
+
 				// Guardar en skipped
 				const skippedDecision = {
 					...storedDecision,
@@ -137,6 +136,9 @@ async function handleNewCandle(API, candle) {
 				reason: decision.reason,
 				analysis: decision.analysis
 			})
+
+			// Imprimir siempre las estadísticas de operaciones actuales
+			printStats()
 
 			if (isOperating()) {
 				console.log('[OPERATION] Operación en curso, no se ejecuta nueva operación')
