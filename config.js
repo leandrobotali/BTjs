@@ -125,7 +125,9 @@ module.exports = {
 	username: process.env.USERIQ,
 	passwd: process.env.PASSWD,
 
-	inversion: process.env.INVERSION,
+	inversion: parseFloat(process.env.INVERSION) || 1,
+	profitEstimado: parseFloat(process.env.PROFIT_ESTIMADO) || 0.86,
+	maxInversion: parseFloat(process.env.MAX_INVERSION) || 10,
 	candleSize: process.env.CANDSIZE,
 	cantCandles: process.env.CANTCANDLES,
 	optionType: process.env.OPTIONTYPE,

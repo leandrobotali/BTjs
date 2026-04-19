@@ -1,6 +1,16 @@
 const fs = require('fs').promises
 const path = require('path')
 const config = require('../config')
+const { obtenerEstadisticasFinancieras } = require('../operations/money-management.js')
+
+// Función para obtener la fecha de hoy en formato DDMMYYYY
+function getTodayDate() {
+	const today = new Date()
+	const day = String(today.getDate()).padStart(2, '0')
+	const month = String(today.getMonth() + 1).padStart(2, '0')
+	const year = today.getFullYear()
+	return `${day}${month}${year}`
+}
 
 // Función para obtener la fecha del día siguiente en formato DDMMYYYY
 function getNextDayDate() {
@@ -14,7 +24,18 @@ function getNextDayDate() {
 	return `${day}${month}${year}`
 }
 
-let date = getNextDayDate() // Formato DDMMYYYY, se puede parametrizar si se desea
+function getInitialDate() {
+	const now = new Date()
+	const hour = now.getHours()
+
+	// Si arrancamos después de las 22:00, ya es la sesión del día siguiente
+	if (hour >= 22) {
+		return getNextDayDate()
+	}
+	return getTodayDate()
+}
+
+let date = getInitialDate() // Autodetectar si usar hoy o mañana al arrancar
 let sesion = 'S1'
 // Paths dinámicos: se recalculan con cada escritura para reflejar cambios de fecha/sesión
 function getLogFile() {
@@ -72,9 +93,15 @@ function printStats() {
 	const dOps = stats.daily.wins + stats.daily.losses
 	const dWr = dOps > 0 ? ((stats.daily.wins / dOps) * 100).toFixed(2) : 0
 
+	const moneyStats = obtenerEstadisticasFinancieras()
+
 	console.log(`\n================= ESTADÍSTICAS =================`)
 	console.log(`TOTAL : ${tOps} Ops | ${stats.total.wins} W / ${stats.total.losses} L | WR: ${tWr}%`)
 	console.log(`DIARIO: ${dOps} Ops | ${stats.daily.wins} W / ${stats.daily.losses} L | WR: ${dWr}%`)
+	console.log(`-------------------------------------------------`)
+	console.log(`PÉRDIDAS A RECUPERAR: $${moneyStats.perdidas}`)
+	console.log(`MÁX PÉRDIDAS ACUMULADAS: $${moneyStats.maxPerdidasAcumuladas}`)
+	console.log(`PRÓXIMA INVERSIÓN (REF): $${moneyStats.lastAmount}`)
 	console.log(`=================================================\n`)
 }
 

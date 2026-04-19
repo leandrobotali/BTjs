@@ -18,18 +18,6 @@ let globalAPI = null
 let globalInitFunction = null
 let isConnected = false
 
-// Función para obtener la fecha del día siguiente en formato DDMMYYYY
-function getNextDayDate() {
-	const tomorrow = new Date()
-	tomorrow.setDate(tomorrow.getDate() + 1)
-
-	const day = String(tomorrow.getDate()).padStart(2, '0')
-	const month = String(tomorrow.getMonth() + 1).padStart(2, '0')
-	const year = tomorrow.getFullYear()
-
-	return `${day}${month}${year}`
-}
-
 // Función para actualizar las variables en manager.js
 function updateManagerDate() {
 	try {
@@ -192,7 +180,6 @@ function initScheduler(API, initFunction) {
 	// CRON 1: Todos los días a las 22:00 (horario Argentina)
 	// Actualiza date al día siguiente y sesion a "S1"
 	cron.schedule('0 22 * * *', () => {
-		const nextDate = getNextDayDate()
 		console.log(`[SCHEDULER] 🕒 22:00 - Actualizando fecha y sesión...`)
 		updateManagerDate()
 		updateManagerSesion('S1')
@@ -240,7 +227,6 @@ function initScheduler(API, initFunction) {
 
 module.exports = {
 	initScheduler,
-	getNextDayDate,
 	disconnectBot,
 	reconnectBot,
 	isMarketOpen

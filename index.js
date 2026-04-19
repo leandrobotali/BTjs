@@ -9,6 +9,7 @@ const SimpleMutex = require('./core/mutex.js')
 const { checkActiveBeforeOperation } = require('./core/active.js')
 const { initScheduler } = require('./core/scheduler.js')
 const { startWaitingForEntry, checkEntryPoint, getStoredDecision, isWaitingForEntry, resetEntryPointState } = require('./operations/entry-point.js')
+const { getPerdidas } = require('./operations/money-management.js')
 
 const callbackMutex = new SimpleMutex()
 
@@ -153,6 +154,27 @@ async function handleNewCandle(API, candle) {
 			}
 
 			if (decision.shouldOperate) {
+				// == REGLA STOP VIERNES (RISK MANAGEMENT) ==
+				// Si faltan <= 8 hs para el cierre (Viernes 16:00 hs Argentina), es decir Viernes >= 08:00
+				// UTC-3 para Argentina
+				const nowUtc = new Date()
+				const argTime = new Date(nowUtc.getTime() - 3 * 3600 * 1000)
+				const isFriday = argTime.getUTCDay() === 5
+				const hourArg = argTime.getUTCHours()
+
+				if (isFriday && hourArg >= 8) {
+					const perdidas = getPerdidas()
+					if (perdidas <= parseFloat(config.inversion)) {
+						console.log(`[OPERATION] ⏸️ Abortada: Faltan < 8hs para el cierre semanal y riesgo aceptable (Pérdidas: $${perdidas.toFixed(2)})`)
+						decision.shouldOperate = false
+						decision.reason = 'Filtro Riesgo Viernes: Cuenta asegurada antes del cierre'
+						addSkipped(decision)
+						return
+					} else {
+						console.log(`[OPERATION] ⚠️ Alerta Riesgo: Viernes < 8hs para cierre, se autoriza intentar recuperar $${perdidas.toFixed(2)}.`)
+					}
+				}
+
 				// MEJORA 6: En lugar de ejecutar inmediatamente, esperar punto de entrada
 				const previousCandle = currentCandles[currentCandles.length - 1]
 				startWaitingForEntry(decision, previousCandle)

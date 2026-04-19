@@ -2,6 +2,7 @@ const config = require('../config.js')
 const SimpleMutex = require('../core/mutex.js')
 const { checkActiveBeforeOperation } = require('../core/active.js')
 const { addOperation } = require('../reports/manager.js')
+const { calcularInversion, registrarResultado } = require('./money-management.js')
 
 const operationMutex = new SimpleMutex()
 
@@ -23,14 +24,16 @@ async function executeOperation(API, decision) {
 		// 	}
 		// }
 
+		const amount = calcularInversion()
+
 		console.log(`\n[OPERATION] Ejecutando ${decision.direction} en ${config.activePrincipal}`)
-		console.log(`[OPERATION] Monto: ${config.inversion}`)
+		console.log(`[OPERATION] Monto: ${amount}`)
 		console.log(`[OPERATION] Duración: ${config.duracion_op} min`)
 
 		const order = await API.trade({
 			active: config.activePrincipal,
 			action: decision.direction,
-			amount: config.inversion,
+			amount: amount,
 			type: config.optionType,
 			duration: config.duracion_op
 		})
@@ -40,7 +43,11 @@ async function executeOperation(API, decision) {
 		await order.close()
 		console.log('[OPERATION] Orden cerrada', order)
 		const result = order.quote.win ? 'WIN' : 'LOSS'
-		const profit = order.quote.win ? order.quote.profit : -parseFloat(config.inversion)
+
+		// Registrar el resultado en la gestión de capital dinámica
+		registrarResultado(amount, order.quote)
+
+		const profit = order.quote.win ? order.quote.profit : -parseFloat(amount)
 
 		console.log(`[OPERATION] Resultado: ${result} | Ganancia: ${profit}`)
 
@@ -48,7 +55,7 @@ async function executeOperation(API, decision) {
 			result,
 			profit,
 			direction: decision.direction,
-			amount: config.inversion,
+			amount: amount,
 			timestamp: new Date(),
 			reason: decision.reason,
 			confidence: decision.confidence,
