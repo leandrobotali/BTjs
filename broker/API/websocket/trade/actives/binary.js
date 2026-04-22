@@ -1,6 +1,6 @@
 const getExpiration = require("../getexpiration")
 
-module.exports = function() {
+module.exports = function () {
 	return new Promise((resolve, reject) => {
 		const {
 			active,
@@ -21,7 +21,7 @@ module.exports = function() {
 				direction: action.toLowerCase(),
 				expired: expiration.getTime() / 1000,
 				refund_value: 0,
-				price: Number(amount),
+				price: amount.toString(), // Forzar a string para evitar errores de parseo en el servidor
 				value: 0,
 				profit_percent: 0
 			}

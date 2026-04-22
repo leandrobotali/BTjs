@@ -11,12 +11,49 @@
  */
 
 const cron = require('node-cron')
+const fs = require('fs')
+const path = require('path')
 const { setDate, setSesion } = require('../reports/manager.js')
+
+const WATCHDOG_LOG_FILE = path.join(__dirname, '../watchdog.log')
 
 // Variable global para almacenar referencia al API y función de inicialización
 let globalAPI = null
 let globalInitFunction = null
 let isConnected = false
+
+// ── WATCHDOG ──────────────────────────────────────────────────────────────────
+const WATCHDOG_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutos
+let watchdogTimer = null
+
+/**
+ * Resetea (o inicia) el watchdog de velas.
+ * Debe llamarse cada vez que llega una vela nueva.
+ * Si no se llama en WATCHDOG_TIMEOUT_MS ms, se fuerza una reconexión completa.
+ */
+function resetWatchdog() {
+	if (watchdogTimer) clearTimeout(watchdogTimer)
+	watchdogTimer = setTimeout(async () => {
+		// Registrar en archivo de persistencia
+		const nowArg = new Date(Date.now() - 3 * 3600 * 1000)
+		const timestamp = nowArg.toISOString().replace('T', ' ').substring(0, 19) + ' (ART)'
+		const logLine = `[WATCHDOG] Se ejecutó watchdog el ${timestamp} - bot sin velas por ${WATCHDOG_TIMEOUT_MS / 60000} min\n`
+		fs.appendFile(WATCHDOG_LOG_FILE, logLine, (err) => {
+			if (err) console.error('[WATCHDOG] ❌ Error escribiendo log:', err.message)
+		})
+
+		console.log(`[WATCHDOG] ⚠️ No se recibieron velas en ${WATCHDOG_TIMEOUT_MS / 60000} minutos.`)
+		console.log('[WATCHDOG] 🔄 Forzando reconexión completa...')
+		console.log(`[WATCHDOG] 📝 Evento registrado en watchdog.log`)
+		isConnected = false
+		try {
+			await reconnectBot()
+		} catch (err) {
+			console.error('[WATCHDOG] ❌ Error durante reconexión:', err.message)
+		}
+	}, WATCHDOG_TIMEOUT_MS)
+}
+// ──────────────────────────────────────────────────────────────────────────────
 
 // Función para actualizar las variables en manager.js
 function updateManagerDate() {
@@ -224,10 +261,12 @@ function initScheduler(API, initFunction) {
 	// Retornar estado inicial para que index.js sepa si debe continuar
 	return isConnected
 }
+// ──────────────────────────────────────────────────────────────────────────────
 
 module.exports = {
 	initScheduler,
 	disconnectBot,
 	reconnectBot,
-	isMarketOpen
+	isMarketOpen,
+	resetWatchdog
 }

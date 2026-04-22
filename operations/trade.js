@@ -40,16 +40,25 @@ async function executeOperation(API, decision) {
 
 		console.log('[OPERATION] Orden abierta, esperando cierre...')
 
-		await order.close()
-		console.log('[OPERATION] Orden cerrada', order)
-		const result = order.quote.win ? 'WIN' : 'LOSS'
+		const closeInfo = await order.close()
+		console.log('[OPERATION] Orden cerrada', JSON.stringify(closeInfo))
+
+		const win = order.quote.win
+		const result = win ? 'WIN' : 'LOSS'
+
+		// Intentar obtener el profit real del mensaje de cierre, si no, estimar
+		const realProfit = (closeInfo && !isNaN(closeInfo.profit_amount))
+			? closeInfo.profit_amount
+			: (win ? (amount * config.profitEstimado) : -amount);
+
+		order.quote.profit = realProfit;
 
 		// Registrar el resultado en la gestión de capital dinámica
 		registrarResultado(amount, order.quote)
 
 		const profit = order.quote.win ? order.quote.profit : -parseFloat(amount)
 
-		console.log(`[OPERATION] Resultado: ${result} | Ganancia: ${profit}`)
+		console.log(`[OPERATION] Resultado: ${result} | Ganancia: $${realProfit.toFixed(2)}`)
 
 		const operation = {
 			result,

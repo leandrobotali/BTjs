@@ -1,6 +1,6 @@
 const getExpiration = require("../getexpiration")
 
-module.exports = function() {
+module.exports = function () {
 	return new Promise((resolve, reject) => {
 		const {
 			active,
@@ -20,24 +20,28 @@ module.exports = function() {
 
 		const formatedDate = year + month + day + "D" + hours + minutes + seconds
 		// console.log('fecha expiracion ', formatedDate);
-		
+
 
 		const instrumentId = "do" + this.API.actives[active] + "A" + formatedDate + "T" + duration + "M" + action[0] + "SPT"
 
 		// console.log('instrumentID: ', instrumentId);
 		// console.log('balance id: ', this.API.balance.id);
-		
+
+
+		const body = {
+			user_balance_id: this.API.balance.id,
+			instrument_id: instrumentId,
+			instrument_index: 576311,
+			asset_id: this.API.actives[active],
+			amount: amount.toString() // Forzar a string para evitar errores de parseo en el servidor
+		};
+
+		// console.log('[DEBUG] Digital Option Body:', JSON.stringify(body, null, 2));
 
 		const id = this.API.WebSocket.send("sendMessage", {
 			name: "digital-options.place-digital-option",
 			version: "3.0",
-			body: {
-				user_balance_id: this.API.balance.id, /* 1172704613 */
-				instrument_id: instrumentId, /* do1861A20260123D044800T1MCSPT */
-				instrument_index: 576311, /* 576311 */
-				asset_id: this.API.actives[active], /* 1861 */
-				amount
-			}
+			body
 		})
 
 		const callback = message => {

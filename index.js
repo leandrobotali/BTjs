@@ -7,14 +7,17 @@ const { executeOperation, isOperating } = require('./operations/trade.js')
 const { addOperation, checkAndSaveHourly, addSkipped, printStats } = require('./reports/manager.js')
 const SimpleMutex = require('./core/mutex.js')
 const { checkActiveBeforeOperation } = require('./core/active.js')
-const { initScheduler } = require('./core/scheduler.js')
+const { initScheduler, resetWatchdog } = require('./core/scheduler.js')
 const { startWaitingForEntry, checkEntryPoint, getStoredDecision, isWaitingForEntry, resetEntryPointState } = require('./operations/entry-point.js')
-const { getPerdidas } = require('./operations/money-management.js')
+const { getPerdidas, loadState } = require('./operations/money-management.js')
 
 const callbackMutex = new SimpleMutex()
 
 async function initialize(API) {
 	try {
+		// Cargar estado de deuda persistente
+		loadState()
+
 		console.log('\n[INIT] Inicializando scheduler de tareas programadas...')
 		const shouldContinue = initScheduler(API, initialize)
 
@@ -48,6 +51,8 @@ async function handleNewCandle(API, candle) {
 
 	let newCandle = false
 	try {
+		// Watchdog: resetear timer en cada evento del broker (tick o vela)
+		resetWatchdog()
 		// checkAndSaveHourly() - Deprecated: Se guarda por operación en tiempo real
 
 		const added = addNewCandle(candle)
