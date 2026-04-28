@@ -19,7 +19,7 @@ async function initialize(API) {
 		loadState()
 
 		console.log('\n[INIT] Inicializando scheduler de tareas programadas...')
-		const shouldContinue = initScheduler(API, initialize)
+		const shouldContinue = initScheduler(API, connectMarket)  // pasa connectMarket, NO initialize
 
 		// Si el mercado está cerrado, no continuar con la inicialización
 		if (!shouldContinue) {
@@ -27,21 +27,30 @@ async function initialize(API) {
 			return
 		}
 
-		console.log('\n[INIT] Cargando información del activo...')
-		await loadActiveSchedule(API)
-
-		console.log('[INIT] Cargando velas históricas...')
-		await loadInitialCandles(API, config.activePrincipal)
-
-		console.log('[INIT] Suscribiéndose a generación de velas...')
-		API.onCandleGenerate(config.activePrincipal, async (candle) => {
-			await handleNewCandle(API, candle)
-		})
-
-		console.log('[INIT] Bot inicializado correctamente\n')
+		await connectMarket(API)
 	} catch (err) {
 		throw new Error(`Error en inicialización: ${err.message}`)
 	}
+}
+
+/**
+ * Conecta al mercado: carga velas históricas y suscribe a generación de velas.
+ * Se usa tanto en el arranque inicial como en reconexiones (watchdog / lunes).
+ * NO reinicia el scheduler ni los crons.
+ */
+async function connectMarket(API) {
+	console.log('\n[INIT] Cargando información del activo...')
+	await loadActiveSchedule(API)
+
+	console.log('[INIT] Cargando velas históricas...')
+	await loadInitialCandles(API, config.activePrincipal)
+
+	console.log('[INIT] Suscribiéndose a generación de velas...')
+	API.onCandleGenerate(config.activePrincipal, async (candle) => {
+		await handleNewCandle(API, candle)
+	})
+
+	console.log('[INIT] Bot inicializado correctamente\n')
 }
 
 async function handleNewCandle(API, candle) {

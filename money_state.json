@@ -1,7 +1,7 @@
 {
-  "perdidas": 1.5838000000000003,
-  "maxPerdidasAcumuladas": 5.4076,
+  "perdidas": 0,
+  "maxPerdidasAcumuladas": 50.37179999999999,
   "lastWasWin": true,
-  "lastAmount": 1.85,
-  "updatedAt": "2026-04-22T09:34:00.615Z"
+  "lastAmount": 1,
+  "updatedAt": "2026-04-28T19:48:00.194Z"
 }

@@ -19,8 +19,9 @@ const WATCHDOG_LOG_FILE = path.join(__dirname, '../watchdog.log')
 
 // Variable global para almacenar referencia al API y función de inicialización
 let globalAPI = null
-let globalInitFunction = null
+let globalConnectFunction = null  // solo la parte de conexión al mercado (sin scheduler)
 let isConnected = false
+let schedulerInitialized = false  // guard: los crons se registran UNA SOLA VEZ
 
 // ── WATCHDOG ──────────────────────────────────────────────────────────────────
 const WATCHDOG_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutos
@@ -28,10 +29,13 @@ let watchdogTimer = null
 
 /**
  * Resetea (o inicia) el watchdog de velas.
- * Debe llamarse cada vez que llega una vela nueva.
- * Si no se llama en WATCHDOG_TIMEOUT_MS ms, se fuerza una reconexión completa.
+ * SOLO activo cuando el bot está conectado (isConnected=true).
+ * Si no se llama en WATCHDOG_TIMEOUT_MS ms, fuerza una reconexión completa.
  */
 function resetWatchdog() {
+	// Si el bot no está conectado (mercado cerrado, viernes, etc.) no activar el timer
+	if (!isConnected) return
+
 	if (watchdogTimer) clearTimeout(watchdogTimer)
 	watchdogTimer = setTimeout(async () => {
 		// Registrar en archivo de persistencia
@@ -52,6 +56,15 @@ function resetWatchdog() {
 			console.error('[WATCHDOG] ❌ Error durante reconexión:', err.message)
 		}
 	}, WATCHDOG_TIMEOUT_MS)
+}
+
+/** Cancela el watchdog (usado al desconectar intencionalmente) */
+function cancelWatchdog() {
+	if (watchdogTimer) {
+		clearTimeout(watchdogTimer)
+		watchdogTimer = null
+		console.log('[WATCHDOG] ⏹️ Timer cancelado (mercado cerrado)')
+	}
 }
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -105,6 +118,9 @@ async function disconnectBot() {
 		return
 	}
 
+	// Detener watchdog al desconectar intencionalmente
+	cancelWatchdog()
+
 	try {
 		console.log('[SCHEDULER] 🔴 Iniciando desconexión...')
 
@@ -150,14 +166,14 @@ async function disconnectBot() {
 	}
 }
 
-// Función para reconectar el bot (Lunes 00:00)
+// Función para reconectar el bot (Lunes 00:00 o watchdog)
 async function reconnectBot() {
 	if (isConnected) {
 		console.log('[SCHEDULER] Bot ya está conectado - Ignorando reconexión')
 		return
 	}
 
-	// Verificar que realmente sea lunes y el mercado esté abierto
+	// Verificar que el mercado esté abierto
 	if (!isMarketOpen()) {
 		console.log('[SCHEDULER] Mercado aún cerrado - Esperando...')
 		return
@@ -166,13 +182,13 @@ async function reconnectBot() {
 	try {
 		console.log('[SCHEDULER] 🟢 Iniciando reconexión...')
 
-		// Ejecutar el código de main.js (reconectar desde cero)
-		if (globalInitFunction && globalAPI) {
-			await globalInitFunction(globalAPI)
+		// Usar la función de conexión al mercado (SIN reiniciar el scheduler)
+		if (globalConnectFunction && globalAPI) {
+			await globalConnectFunction(globalAPI)
 			isConnected = true
 			console.log('[SCHEDULER] 🟢 Bot reconectado exitosamente')
 		} else {
-			console.error('[SCHEDULER] ❌ No se puede reconectar: función de inicialización no disponible')
+			console.error('[SCHEDULER] ❌ No se puede reconectar: función de conexión no disponible')
 		}
 	} catch (err) {
 		console.error('[SCHEDULER] ❌ Error en reconexión:', err.message)
@@ -195,13 +211,13 @@ function isMarketOpen() {
 	return true
 }
 
-// Inicializar crons
-function initScheduler(API, initFunction) {
+// Inicializar crons (se ejecuta UNA SOLA VEZ al arrancar el proceso)
+function initScheduler(API, connectFunction) {
 	console.log('[SCHEDULER] Inicializando tareas programadas...')
 
 	// Guardar referencias globales para reconexión
 	globalAPI = API
-	globalInitFunction = initFunction
+	globalConnectFunction = connectFunction  // solo la parte de conexión, sin reiniciar scheduler
 
 	// Verificar si el mercado está abierto al iniciar
 	if (!isMarketOpen()) {
@@ -213,6 +229,13 @@ function initScheduler(API, initFunction) {
 		console.log('[SCHEDULER] ✓ Mercado ABIERTO - Bot operativo')
 		isConnected = true
 	}
+
+	// GUARD: los crons se registran una sola vez por proceso
+	if (schedulerInitialized) {
+		console.log('[SCHEDULER] ⚠️ Crons ya registrados - omitiendo re-registro (evita duplicados)')
+		return isConnected
+	}
+	schedulerInitialized = true
 
 	// CRON 1: Todos los días a las 22:00 (horario Argentina)
 	// Actualiza date al día siguiente y sesion a "S1"
@@ -268,5 +291,6 @@ module.exports = {
 	disconnectBot,
 	reconnectBot,
 	isMarketOpen,
-	resetWatchdog
+	resetWatchdog,
+	cancelWatchdog
 }
