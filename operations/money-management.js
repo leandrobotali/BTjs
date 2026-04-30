@@ -69,9 +69,8 @@ const calcularInversion = () => {
 
     // Si venimos de un WIN en modo recuperación, mantenemos el importe exacto
     // para intentar recuperar la otra mitad.
-    if (lastWasWin) {
+    if (lastWasWin)
         return lastAmount;
-    }
 
     // Si venimos de un LOSS o arrancamos la recuperación
     const resultado = perdidas / 2;
@@ -101,6 +100,11 @@ const calcularInversion = () => {
  * @param {object} quote Objeto quote desde IQ Option ({ win: boolean, profit: number })
  */
 const registrarResultado = (amount, quote) => {
+    if (quote.tie) {
+        console.log('[MONEY] ℹ️ Operación empatada. No se modifican las pérdidas ni la racha.');
+        return;
+    }
+
     const win = quote.win;
 
     if (win) {
@@ -112,7 +116,11 @@ const registrarResultado = (amount, quote) => {
 
         perdidas -= profitNeto;
         if (perdidas < 0 || isNaN(perdidas)) perdidas = 0;
-        lastWasWin = true;
+        // if(lastWasWin)
+        //     lastWasWin = false;
+        // else
+        //     lastWasWin = true;
+        lastWasWin = !lastWasWin;
     } else {
         // En pérdida, el monto invertido se suma a las deudas
         const montoPerdido = parseFloat(amount) || 0;

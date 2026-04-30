@@ -43,20 +43,44 @@ async function executeOperation(API, decision) {
 		const closeInfo = await order.close()
 		console.log('[OPERATION] Orden cerrada', JSON.stringify(closeInfo))
 
-		const win = order.quote.win
-		const result = win ? 'WIN' : 'LOSS'
+		let isWin = false;
+		let isTie = false;
+		let result = 'LOSS';
+		let realProfit = -amount;
 
-		// Intentar obtener el profit real del mensaje de cierre, si no, estimar
-		const realProfit = (closeInfo && !isNaN(closeInfo.profit_amount))
-			? closeInfo.profit_amount
-			: (win ? (amount * config.profitEstimado) : -amount);
+		if (closeInfo && closeInfo.invest !== undefined && closeInfo.close_profit !== undefined) {
+			const invest = parseFloat(closeInfo.invest);
+			const closeProfit = parseFloat(closeInfo.close_profit);
 
+			if (closeProfit > invest) {
+				isWin = true;
+				result = 'WIN';
+				realProfit = closeProfit - invest;
+			} else if (closeProfit === invest) {
+				isTie = true;
+				result = 'TIE';
+				realProfit = 0;
+			} else {
+				isWin = false;
+				result = 'LOSS';
+				realProfit = closeProfit - invest;
+			}
+		} else {
+			isWin = order.quote.win;
+			result = isWin ? 'WIN' : 'LOSS';
+			realProfit = (closeInfo && !isNaN(closeInfo.profit_amount))
+				? closeInfo.profit_amount
+				: (isWin ? (amount * config.profitEstimado) : -amount);
+		}
+
+		order.quote.win = isWin;
+		order.quote.tie = isTie;
 		order.quote.profit = realProfit;
 
 		// Registrar el resultado en la gestión de capital dinámica
 		registrarResultado(amount, order.quote)
 
-		const profit = order.quote.win ? order.quote.profit : -parseFloat(amount)
+		const profit = realProfit;
 
 		console.log(`[OPERATION] Resultado: ${result} | Ganancia: $${realProfit.toFixed(2)}`)
 
@@ -78,7 +102,7 @@ async function executeOperation(API, decision) {
 
 		// Registrar resultado real para gestión dinámica de confianza en strategy-core
 		global._botRealResults = global._botRealResults || []
-		global._botRealResults.push({ win: order.quote.win, ts: Date.now() })
+		global._botRealResults.push({ win: order.quote.win, tie: order.quote.tie, ts: Date.now() })
 		if (global._botRealResults.length > 20) global._botRealResults = global._botRealResults.slice(-20)
 
 		return {
