@@ -50,16 +50,20 @@ function detectRegime(gatedFeatures, gatedInteractions) {
 
     // ACTIVE: Mercado estructurado en movimiento
     // Coherencia estable + aceleración + presión efectiva clara
-    // DINÁMICO: El rango debe ser suficiente para no ser mercado muerto (umbral ~0.4 pips relativo)
-    const minRangeNeeded = 0.00004; // Umbral dinámico base para 100 ticks
-    const isDynamicVolActive = (gatedFeatures.RANGE || 0) > minRangeNeeded;
+    // DINÁMICO: El rango relativo (RANGE) debe superar un umbral adaptativo.
+    // RANGE ya está normalizado por el precio medio de la ventana, así que el umbral
+    // funciona igual para EUR/USD (~1.08) que para GBP/JPY (~190).
+    // 0.00015 ≈ 1.5 pips en un par de 5 decimales con precio ~1.0
+    const RANGE_MIN = 0.00015
+    const rangeValue = gatedFeatures.RANGE || 0
+    const isDynamicVolActive = rangeValue > RANGE_MIN
 
     // CET = ACELERACIÓN (Temporal o Geométrica)
     // PED = INERCIA / PRESIÓN (Elasticidad * Persistencia)
     if (CI >= 0.40 && Math.abs(CET) >= 0.09 && Math.abs(PED) >= 0.07 && isDynamicVolActive) {
         return {
             regime: REGIMES.ACTIVE,
-            reason: `CI=${CI.toFixed(3)}, ACEL(CET)=${CET.toFixed(3)}, INERCIA(PED)=${PED.toFixed(3)}, RANGE=${(gatedFeatures.RANGE * 10000).toFixed(4)}`
+            reason: `CI=${CI.toFixed(3)}, ACEL(CET)=${CET.toFixed(3)}, INERCIA(PED)=${PED.toFixed(3)}, RANGE=${(rangeValue * 10000).toFixed(4)} (min: ${(RANGE_MIN * 10000).toFixed(1)})`
         }
     }
 

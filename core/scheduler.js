@@ -137,12 +137,7 @@ async function disconnectBot() {
 		clearTicks()
 		console.log('[SCHEDULER] ✓ Buffer de velas limpiado')
 
-		// 2.5. Limpiar Zonas Z
-		const { clearZonesZ } = require('../indicators/zone-z.js')
-		clearZonesZ()
-		console.log('[SCHEDULER] ✓ Zonas Z limpiadas')
-
-		// 2.6. Limpiar global state (resultados reales para gestión dinámica)
+		// 2.5. Limpiar global state (resultados reales para gestión dinámica)
 		if (typeof global !== 'undefined' && global._botRealResults) {
 			global._botRealResults = []
 			console.log('[SCHEDULER] ✓ Global state limpiado')

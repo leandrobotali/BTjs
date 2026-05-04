@@ -14,6 +14,8 @@ const { analyzeCurrentTicks, loadWeights } = require('./engine/engine-core.js')
 
 const callbackMutex = new SimpleMutex()
 let operationExecutedThisCandle = false // Reset cada nueva vela
+let lastNoTradeTimestamp = 0            // Cooldown: timestamp del último NO-TRADE
+const COOLDOWN_MS = 3000                // 3 segundos de cooldown entre evaluaciones
 
 async function initialize(API) {
 	try {
@@ -89,6 +91,13 @@ async function handleNewCandle(API, candle) {
 		const inExecutionWindow = currentSecond >= config.engine.entryWindowStart && currentSecond <= config.engine.entryWindowEnd
 
 		if (inExecutionWindow && !operationExecutedThisCandle) {
+			// COOLDOWN: Si el motor dijo NO-TRADE hace menos de 3 segundos, no re-evaluar.
+			// Evita entradas por spikes momentáneos en el score.
+			const now = Date.now()
+			if (now - lastNoTradeTimestamp < COOLDOWN_MS) {
+				return
+			}
+
 			// El motor usa la ventana deslizante continua
 			const tickWindow = getWindow()
 
@@ -155,6 +164,11 @@ async function handleNewCandle(API, candle) {
 				}
 
 				await executeOperation(API, tradeDecision)
+			}
+
+			// Si el motor dijo NO operar, activar cooldown
+			if (!decision.shouldOperate) {
+				lastNoTradeTimestamp = Date.now()
 			}
 
 			// Si alcanzamos el fin de la ventana (segundo 25) y NO operamos, logueamos el cierre y a skipped

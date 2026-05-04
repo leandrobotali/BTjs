@@ -1,6 +1,5 @@
 const config = require('../config.js')
 const SimpleMutex = require('../core/mutex.js')
-const { checkActiveBeforeOperation } = require('../core/active.js')
 const { addOperation } = require('../reports/manager.js')
 const { calcularInversion, registrarResultado } = require('./money-management.js')
 const { recordResult } = require('../engine/engine-core.js')
@@ -15,16 +14,6 @@ async function executeOperation(API, decision) {
 	}
 
 	try {
-		// Verificar que el activo esté abierto
-		// const isOpen = await checkActiveBeforeOperation(API)
-		// if (!isOpen) {
-		// 	console.log('[OPERATION] Activo cerrado, operación cancelada')
-		// 	return {
-		// 		executed: false,
-		// 		reason: 'Activo cerrado'
-		// 	}
-		// }
-
 		const amount = calcularInversion()
 
 		console.log(`\n[OPERATION] Ejecutando ${decision.direction} en ${config.activePrincipal}`)
@@ -44,44 +33,44 @@ async function executeOperation(API, decision) {
 		const closeInfo = await order.close()
 		console.log('[OPERATION] Orden cerrada', JSON.stringify(closeInfo))
 
-		let isWin = false;
-		let isTie = false;
-		let result = 'LOSS';
-		let realProfit = -amount;
+		let isWin = false
+		let isTie = false
+		let result = 'LOSS'
+		let realProfit = -amount
 
 		if (closeInfo && closeInfo.invest !== undefined && closeInfo.close_profit !== undefined) {
-			const invest = parseFloat(closeInfo.invest);
-			const closeProfit = parseFloat(closeInfo.close_profit);
+			const invest = parseFloat(closeInfo.invest)
+			const closeProfit = parseFloat(closeInfo.close_profit)
 
 			if (closeProfit > invest) {
-				isWin = true;
-				result = 'WIN';
-				realProfit = closeProfit - invest;
+				isWin = true
+				result = 'WIN'
+				realProfit = closeProfit - invest
 			} else if (closeProfit === invest) {
-				isTie = true;
-				result = 'TIE';
-				realProfit = 0;
+				isTie = true
+				result = 'TIE'
+				realProfit = 0
 			} else {
-				isWin = false;
-				result = 'LOSS';
-				realProfit = closeProfit - invest;
+				isWin = false
+				result = 'LOSS'
+				realProfit = closeProfit - invest
 			}
 		} else {
-			isWin = order.quote.win;
-			result = isWin ? 'WIN' : 'LOSS';
+			isWin = order.quote.win
+			result = isWin ? 'WIN' : 'LOSS'
 			realProfit = (closeInfo && !isNaN(closeInfo.profit_amount))
 				? closeInfo.profit_amount
-				: (isWin ? (amount * config.profitEstimado) : -amount);
+				: (isWin ? (amount * config.profitEstimado) : -amount)
 		}
 
-		order.quote.win = isWin;
-		order.quote.tie = isTie;
-		order.quote.profit = realProfit;
+		order.quote.win = isWin
+		order.quote.tie = isTie
+		order.quote.profit = realProfit
 
 		// Registrar el resultado en la gestión de capital dinámica
 		registrarResultado(amount, order.quote)
 
-		// Registrar resultado real para gestión dinámica de confianza en strategy-core
+		// Registrar resultado real para gestión dinámica de confianza
 		global._botRealResults = global._botRealResults || []
 		global._botRealResults.push({ win: order.quote.win, tie: order.quote.tie, ts: Date.now() })
 		if (global._botRealResults.length > 20) global._botRealResults = global._botRealResults.slice(-20)
@@ -91,31 +80,24 @@ async function executeOperation(API, decision) {
 			console.log(`[LEARNER] Enviando snapshot y resultado: ${result} a la dirección ${decision.direction}`)
 			recordResult(decision.featureSnapshot, result, decision.direction)
 		} else {
-			console.log('[LEARNER] No se encontró featureSnapshot en esta decisión (posible prueba o motor viejo)')
+			console.log('[LEARNER] No se encontró featureSnapshot en esta decisión')
 		}
 
 		console.log(`[OPERATION] Resultado: ${result} | Ganancia: $${realProfit.toFixed(2)}`)
 
 		const operation = {
 			result,
-			profit,
+			profit: realProfit,
 			direction: decision.direction,
 			amount: amount,
 			timestamp: new Date(),
 			reason: decision.reason,
 			confidence: decision.confidence,
 			analysis: decision.analysis,
-			ticks: decision.ticks,
-			candles: decision.candles, // Últimas 20 velas para contexto
-			indicators: decision.indicators
+			featureSnapshot: decision.featureSnapshot
 		}
 
 		addOperation(operation)
-
-		// Registrar resultado real para gestión dinámica de confianza en strategy-core
-		global._botRealResults = global._botRealResults || []
-		global._botRealResults.push({ win: order.quote.win, tie: order.quote.tie, ts: Date.now() })
-		if (global._botRealResults.length > 20) global._botRealResults = global._botRealResults.slice(-20)
 
 		return {
 			executed: true,

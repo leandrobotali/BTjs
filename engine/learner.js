@@ -21,8 +21,9 @@ const path = require('path')
 const WEIGHTS_FILE = path.join(__dirname, 'weights.json')
 const LOG_FILE = path.join(__dirname, 'learning_log.json')
 
-const LEARNING_RATE = 0.01
+const LEARNING_RATE = 0.005          // Reducido para mayor estabilidad
 const NUM_WEIGHTS = 8
+const MIN_OPS_TO_LEARN = 50          // No ajustar pesos hasta tener 50 operaciones
 
 // Pesos iniciales: todos iguales (sistema imparcial)
 const INITIAL_WEIGHTS = Array(NUM_WEIGHTS).fill(1.0 / NUM_WEIGHTS)
@@ -142,12 +143,32 @@ function recordResult(featureSnapshot, result, direction) {
 
     const featureVector = extractFeatureVector(featureSnapshot)
 
-    // Para dirección PUT, la señal es inversa (el score fue negativo)
+    // FASE DE OBSERVACIÓN: No ajustar pesos hasta tener suficientes operaciones.
+    // Los primeros MIN_OPS_TO_LEARN trades se registran pero los pesos quedan uniformes.
+    // Esto evita que el learner desestabilice el sistema con poca data.
+    if (operationCount < MIN_OPS_TO_LEARN) {
+        const winRate = (winCount / operationCount * 100).toFixed(1)
+        console.log(`[LEARNER] ${result} registrado (FASE OBSERVACIÓN ${operationCount}/${MIN_OPS_TO_LEARN}) | WinRate: ${winRate}%`)
+        console.log(`[LEARNER] Pesos sin cambios (esperando ${MIN_OPS_TO_LEARN} operaciones para activar aprendizaje)`)
+        saveWeights()
+        appendToLog({
+            timestamp: new Date().toISOString(),
+            result,
+            direction,
+            outcome,
+            featureVector,
+            prevWeights: [...weights],
+            newWeights: [...weights],
+            winRate,
+            operationCount,
+            phase: 'OBSERVATION'
+        })
+        return
+    }
+
+    // FASE DE APRENDIZAJE: Ajustar pesos con perceptron online
     const directionMultiplier = direction === 'call' ? 1 : -1
 
-    // Update: w_i += lr * outcome * feature_i * direction
-    // Si ganamos y estábamos en call → reforzar features que apuntaban UP
-    // Si perdemos y estábamos en call → reducir features que apuntaban UP
     const prevWeights = [...weights]
     for (let i = 0; i < NUM_WEIGHTS; i++) {
         weights[i] += LEARNING_RATE * outcome * directionMultiplier * featureVector[i]
@@ -161,7 +182,7 @@ function recordResult(featureSnapshot, result, direction) {
 
     // Log de aprendizaje
     const winRate = (winCount / operationCount * 100).toFixed(1)
-    console.log(`[LEARNER] ${result} registrado | WinRate: ${winRate}% (${winCount}/${operationCount})`)
+    console.log(`[LEARNER] ${result} registrado (APRENDIZAJE ACTIVO) | WinRate: ${winRate}% (${winCount}/${operationCount})`)
     console.log(`[LEARNER] Pesos actualizados:`, formatWeights(weights))
 
     // Guardar en log histórico (append)
@@ -174,7 +195,8 @@ function recordResult(featureSnapshot, result, direction) {
         prevWeights,
         newWeights: [...weights],
         winRate,
-        operationCount
+        operationCount,
+        phase: 'LEARNING'
     })
 }
 
