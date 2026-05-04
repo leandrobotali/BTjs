@@ -1,22 +1,26 @@
 const config = require('./config.js')
 const { loadActiveSchedule } = require('./core/active.js')
-const { loadInitialCandles, addNewCandle, getCandles, addNewTick, clearTicks, getTicks, setCachedLevels, setLastStatusCandle } = require('./core/candles.js')
-const { getLevels } = require('./indicators/levels.js')
-const { analyzeStrategy } = require('./strategy/strategy-core.js')
+const { loadInitialCandles, addNewCandle, setLastStatusCandle, clearCandles } = require('./core/candles.js')
 const { executeOperation, isOperating } = require('./operations/trade.js')
-const { addOperation, checkAndSaveHourly, addSkipped, printStats } = require('./reports/manager.js')
+const { addSkipped, printStats } = require('./reports/manager.js')
 const SimpleMutex = require('./core/mutex.js')
 const { checkActiveBeforeOperation } = require('./core/active.js')
 const { initScheduler, resetWatchdog } = require('./core/scheduler.js')
-const { startWaitingForEntry, checkEntryPoint, getStoredDecision, isWaitingForEntry, resetEntryPointState } = require('./operations/entry-point.js')
 const { getPerdidas, loadState } = require('./operations/money-management.js')
 
+// ENGINE IMPORTS
+const { addTick, getWindow } = require('./engine/tick-window.js')
+const { analyzeCurrentTicks, loadWeights } = require('./engine/engine-core.js')
+
 const callbackMutex = new SimpleMutex()
+let operationExecutedThisCandle = false // Reset cada nueva vela
 
 async function initialize(API) {
 	try {
 		// Cargar estado de deuda persistente
 		loadState()
+		// Cargar pesos del Motor de Autoaprendizaje
+		loadWeights()
 
 		console.log('\n[INIT] Inicializando scheduler de tareas programadas...')
 		const shouldContinue = initScheduler(API, connectMarket)  // pasa connectMarket, NO initialize
@@ -62,115 +66,62 @@ async function handleNewCandle(API, candle) {
 	try {
 		// Watchdog: resetear timer en cada evento del broker (tick o vela)
 		resetWatchdog()
-		// checkAndSaveHourly() - Deprecated: Se guarda por operación en tiempo real
+
+		// ALIMENTAR MOTOR SIEMPRE
+		addTick(Date.now(), candle.close)
 
 		const added = addNewCandle(candle)
-		if (!added) {
-			/* si no se agrego una nueva vela, almacenamos el tick en el array  */
-			addNewTick(candle.close)
-			setLastStatusCandle(candle) // guardar volumen del ultimo tick de la vela en curso
 
-			// MEJORA 6: Verificar punto de entrada si está esperando
-			if (isWaitingForEntry()) {
-				const entryCheck = checkEntryPoint(candle.close)
-
-				if (entryCheck.reached) {
-					// Precio alcanzó el punto de entrada, ejecutar operación
-					const storedDecision = getStoredDecision()
-					console.log('[ENTRY_POINT] Ejecutando operación en punto de entrada protector')
-					resetEntryPointState()
-
-					// Ejecutar y guardar operación
-					const operationResult = await executeOperation(API, storedDecision)
-					if (operationResult) {
-						console.log('[ENTRY_POINT] Operación ejecutada')
-					}
-				} else if (entryCheck.shouldAbort) {
-					// Timeout: precio no llegó al punto de entrada
-					const storedDecision = getStoredDecision()
-					console.log(`[ENTRY_POINT] ${entryCheck.reason}`)
-					console.log(`[ENTRY_POINT] Precio objetivo: ${entryCheck.details.targetPrice}, Precio alcanzado: ${entryCheck.details.currentPrice}`)
-
-					// Guardar en skipped con razón detallada
-					const skippedDecision = {
-						...storedDecision,
-						reason: entryCheck.reason,
-						entryPointDetails: entryCheck.details
-					}
-					addSkipped(skippedDecision)
-					resetEntryPointState()
-				}
-			}
-		} else {
+		if (added) {
 			newCandle = true
-			/* si se agrego una nueva vela, procesamos la operación */
+			operationExecutedThisCandle = false // Resetear flag de operación por vela
+		} else {
+			setLastStatusCandle(candle)
+		}
 
-			// MEJORA 6: Si está esperando punto de entrada y se acabó el tiempo, abortar
-			if (isWaitingForEntry()) {
-				console.log('[ENTRY_POINT] Nueva vela iniciada - Timeout de punto de entrada')
-				const storedDecision = getStoredDecision()
-				const lastTick = getTicks()[getTicks().length - 1] || candle.close
-
-				// Guardar en skipped
-				const skippedDecision = {
-					...storedDecision,
-					reason: `⚠️ Precio no alcanzó punto de entrada protector (timeout al finalizar vela)`,
-					entryPointDetails: {
-						targetPrice: 'N/A',
-						currentPrice: lastTick.toFixed(6),
-						elapsed: '60+ segundos',
-						operationType: 'TIMEOUT'
-					}
-				}
-				addSkipped(skippedDecision)
-				resetEntryPointState()
-				console.log('[ENTRY_POINT] Estado reseteado - Continuando con análisis normal')
-			}
-
-			console.log('[STRATEGY] Calculando niveles S/R...')
-
-			// Calcular y cachear niveles S/R una sola vez por vela nueva
-			const currentCandles = getCandles()
-			const levels = getLevels(currentCandles)
-			setCachedLevels(levels)
-			console.log(`[LEVELS] ${levels.length} zonas activas calculadas`)
-			if (levels.length > 0) {
-				console.log('[LEVELS] Detalle de zonas activas:')
-				levels.forEach((lvl, idx) => {
-					console.log(`  ${idx + 1}. ${lvl.type} @ ${lvl.price.toFixed(6)} | zona: [${lvl.zoneBottom.toFixed(6)}, ${lvl.zoneTop.toFixed(6)}] | calidad: ${lvl.quality} | rechazos: ${lvl.rejections || lvl.touches || 0} | flip: ${lvl.isFlipped ? 'SI' : 'NO'} | desgastada: ${lvl.isWorn ? 'SI' : 'NO'}`)
-				})
-			} else {
-				console.log('[LEVELS] No hay zonas activas detectadas.')
-			}
-
-			console.log('[STRATEGY] Analizando...')
-			const decision = await analyzeStrategy(currentCandles, getTicks(), levels)
-
-			console.log('-DECISION-', {
-				shouldOperate: decision.shouldOperate,
-				reason: decision.reason,
-				analysis: decision.analysis
-			})
-
-			// Imprimir siempre las estadísticas de operaciones actuales
+		if (added) {
+			// Imprimir siempre las estadísticas de operaciones al cerrar una vela
 			printStats()
+		}
 
-			if (isOperating()) {
-				console.log('[OPERATION] Operación en curso, no se ejecuta nueva operación')
-				return
+		// LOGICA DE EJECUCION: Entre segundo 1 y 25
+		const currentSecond = new Date().getSeconds()
+		const inExecutionWindow = currentSecond >= config.engine.entryWindowStart && currentSecond <= config.engine.entryWindowEnd
+
+		if (inExecutionWindow && !operationExecutedThisCandle) {
+			// El motor usa la ventana deslizante continua
+			const tickWindow = getWindow()
+
+			// Solo arranca si el bot tiene la memoria completamente llena con los 100 ticks requeridos
+			if (tickWindow.length < config.engine.windowSize) {
+				// Solo avisamos una vez por vela para no spamear
+				if (currentSecond === 5) {
+					console.log(`[ENGINE] (${currentSecond}s) Cargando memoria inicial tras el reinicio... (${tickWindow.length}/${config.engine.windowSize} ticks adquiridos)`)
+				}
+				return // Silencioso hasta tener la memoria requerida
 			}
 
-			// Verificar que el activo esté abierto
-			const canOperate = await checkActiveBeforeOperation(API)
-			if (!canOperate) {
-				console.log('[OPERATION] No se puede operar, el activo no está disponible')
-				return
-			}
+			const decision = analyzeCurrentTicks(tickWindow)
 
+			// Si el motor decide operar en CUALQUIER segundo de la ventana (1 al 25)
 			if (decision.shouldOperate) {
+				const snap = decision.featureSnapshot || {}
+				const detalles = `CI=${(snap.CI || 0).toFixed(3)}, CET=${(snap.CET || 0).toFixed(3)}, PED=${(snap.PED || 0).toFixed(3)}`
+
+				// Evitar log masivo si ya está operando otra cosa
+				if (isOperating()) return
+
+				console.log(`\n[ENGINE] ✅ SE OPERA [${decision.direction}] | Segundo: ${currentSecond}`)
+				console.log(`[ENGINE] 💬 Resolución: ${decision.humanReason}`)
+				console.log(`[ENGINE] ⚙️ Técnicos: ${detalles} | Score: ${(decision.score).toFixed(3)} | Detalle interno: ${decision.reason}`)
+				// Verificar que el activo esté abierto
+				const canOperate = await checkActiveBeforeOperation(API)
+				if (!canOperate) {
+					console.log('[OPERATION] No se puede operar, el activo no está disponible')
+					return
+				}
+
 				// == REGLA STOP VIERNES (RISK MANAGEMENT) ==
-				// Si faltan <= 8 hs para el cierre (Viernes 16:00 hs Argentina), es decir Viernes >= 08:00
-				// UTC-3 para Argentina
 				const nowUtc = new Date()
 				const argTime = new Date(nowUtc.getTime() - 3 * 3600 * 1000)
 				const isFriday = argTime.getUTCDay() === 5
@@ -180,29 +131,61 @@ async function handleNewCandle(API, candle) {
 					const perdidas = getPerdidas()
 					if (perdidas <= parseFloat(config.inversion)) {
 						console.log(`[OPERATION] ⏸️ Abortada: Faltan < 8hs para el cierre semanal y riesgo aceptable (Pérdidas: $${perdidas.toFixed(2)})`)
-						decision.shouldOperate = false
-						decision.reason = 'Filtro Riesgo Viernes: Cuenta asegurada antes del cierre'
-						addSkipped(decision)
+
+						const skippedDecision = {
+							direction: decision.direction,
+							reason: 'Filtro Riesgo Viernes: Cuenta asegurada antes del cierre',
+							confidence: Math.round(Math.abs(decision.score) * 100),
+							analysis: `Regime: ${decision.regime} | Motor dijo: ${decision.humanReason}`
+						}
+						addSkipped(skippedDecision)
+						operationExecutedThisCandle = true // Evitar reintentos esta vela
 						return
 					} else {
 						console.log(`[OPERATION] ⚠️ Alerta Riesgo: Viernes < 8hs para cierre, se autoriza intentar recuperar $${perdidas.toFixed(2)}.`)
 					}
 				}
 
-				// MEJORA 6: En lugar de ejecutar inmediatamente, esperar punto de entrada
-				const previousCandle = currentCandles[currentCandles.length - 1]
-				startWaitingForEntry(decision, previousCandle)
-				console.log('[DECISION] Se debe operar - Esperando punto de entrada protector')
-			} else {
-				console.log('[DECISION] No se opera en esta vela')
-				addSkipped(decision)
+				// Ejecutar directamente
+				operationExecutedThisCandle = true
+
+				const tradeDecision = {
+					direction: decision.direction,
+					reason: decision.humanReason,
+					confidence: Math.round(Math.abs(decision.score) * 100),
+					analysis: `Regime: ${decision.regime} | Score: ${(decision.score).toFixed(3)} | Detalles: ${detalles}`,
+					featureSnapshot: decision.featureSnapshot
+				}
+
+				await executeOperation(API, tradeDecision)
+			}
+
+			// Si alcanzamos el fin de la ventana (segundo 25) y NO operamos, logueamos el cierre y a skipped
+			if (currentSecond === config.engine.entryWindowEnd && !operationExecutedThisCandle && !decision.shouldOperate) {
+				// Aseguramos de anotarlo una sola vez
+				operationExecutedThisCandle = true
+
+				const snap = decision.featureSnapshot || {}
+				const detalles = `CI=${(snap.CI || 0).toFixed(3)}, CET=${(snap.CET || 0).toFixed(3)}, PED=${(snap.PED || 0).toFixed(3)}, VOL=${(snap.VOL || 0).toFixed(6)}`
+
+				console.log(`\n[ENGINE] ❌ NO SE OPERÓ (Fin de ventana analítica | Segundo 25)`)
+				console.log(`[ENGINE] 💬 Resolución: ${decision.humanReason}`)
+				console.log(`[ENGINE] ⚙️ Técnicos Finales: ${detalles} | Régimen: ${decision.regime} | Motivo: ${decision.reason}`)
+
+				const skippedDecision = {
+					direction: 'NONE',
+					reason: decision.humanReason,
+					confidence: 0,
+					analysis: `Regime: ${decision.regime} | ${decision.reason} | ${detalles}`,
+					featureSnapshot: snap
+				}
+				addSkipped(skippedDecision)
 			}
 		}
 	} catch (err) {
-		console.error('[ERROR] Error procesando vela:', err.message)
+		console.error('[ERROR] Error procesando vela/tick:', err.message)
 		console.error('[ERROR] Stack:', err.stack)
 	} finally {
-		if (newCandle) clearTicks()
 		callbackMutex.unlock()
 	}
 }

@@ -1,0 +1,27 @@
+{
+  "weights": [
+    0.125,
+    0.125,
+    0.125,
+    0.125,
+    0.125,
+    0.125,
+    0.125,
+    0.125
+  ],
+  "operationCount": 0,
+  "winCount": 0,
+  "lossCount": 0,
+  "winRate": "N/A",
+  "lastUpdate": "2026-05-04T17:33:09.143Z",
+  "weightLabels": [
+    "ED",
+    "PS",
+    "VR",
+    "AFT",
+    "FD",
+    "PED",
+    "EV",
+    "SR"
+  ]
+}

@@ -124,6 +124,7 @@ async function saveSkippedToFile(decision) {
 			ticks: decision.ticks,
 			candles: decision.candles,
 			indicators: decision.indicators,
+			featureSnapshot: decision.featureSnapshot || null, // Exportar matriz matemática de micro-dinámica
 			savedAt: new Date().toISOString()
 		}
 		await fs.appendFile(skippedFile, JSON.stringify(entry) + '\n', 'utf8')

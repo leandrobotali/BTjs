@@ -3,6 +3,7 @@ const SimpleMutex = require('../core/mutex.js')
 const { checkActiveBeforeOperation } = require('../core/active.js')
 const { addOperation } = require('../reports/manager.js')
 const { calcularInversion, registrarResultado } = require('./money-management.js')
+const { recordResult } = require('../engine/engine-core.js')
 
 const operationMutex = new SimpleMutex()
 
@@ -80,7 +81,18 @@ async function executeOperation(API, decision) {
 		// Registrar el resultado en la gestión de capital dinámica
 		registrarResultado(amount, order.quote)
 
-		const profit = realProfit;
+		// Registrar resultado real para gestión dinámica de confianza en strategy-core
+		global._botRealResults = global._botRealResults || []
+		global._botRealResults.push({ win: order.quote.win, tie: order.quote.tie, ts: Date.now() })
+		if (global._botRealResults.length > 20) global._botRealResults = global._botRealResults.slice(-20)
+
+		// ENVIAR AL LEARNER (Nuevo Motor)
+		if (decision.featureSnapshot) {
+			console.log(`[LEARNER] Enviando snapshot y resultado: ${result} a la dirección ${decision.direction}`)
+			recordResult(decision.featureSnapshot, result, decision.direction)
+		} else {
+			console.log('[LEARNER] No se encontró featureSnapshot en esta decisión (posible prueba o motor viejo)')
+		}
 
 		console.log(`[OPERATION] Resultado: ${result} | Ganancia: $${realProfit.toFixed(2)}`)
 
