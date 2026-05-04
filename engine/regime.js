@@ -50,13 +50,16 @@ function detectRegime(gatedFeatures, gatedInteractions) {
 
     // ACTIVE: Mercado estructurado en movimiento
     // Coherencia estable + aceleración + presión efectiva clara
-    // Filtro de VOL: garantiza que no sea un 'mercado muerto' moviendo 1 decimal.
-    const isActiveVol = gatedFeatures.VOL > 0.00002; // Al menos 0.2 pips de movimiento promedio por tick
+    // DINÁMICO: El rango debe ser suficiente para no ser mercado muerto (umbral ~0.4 pips relativo)
+    const minRangeNeeded = 0.00004; // Umbral dinámico base para 100 ticks
+    const isDynamicVolActive = (gatedFeatures.RANGE || 0) > minRangeNeeded;
 
-    if (CI >= 0.45 && Math.abs(CET) >= 0.20 && Math.abs(PED) >= 0.09 && isActiveVol) {
+    // CET = ACELERACIÓN (Temporal o Geométrica)
+    // PED = INERCIA / PRESIÓN (Elasticidad * Persistencia)
+    if (CI >= 0.40 && Math.abs(CET) >= 0.09 && Math.abs(PED) >= 0.07 && isDynamicVolActive) {
         return {
             regime: REGIMES.ACTIVE,
-            reason: `CI=${CI.toFixed(3)}, CET=${CET.toFixed(3)}, PED=${PED.toFixed(3)}, VOL=${gatedFeatures.VOL.toFixed(6)}`
+            reason: `CI=${CI.toFixed(3)}, ACEL(CET)=${CET.toFixed(3)}, INERCIA(PED)=${PED.toFixed(3)}, RANGE=${(gatedFeatures.RANGE * 10000).toFixed(4)}`
         }
     }
 

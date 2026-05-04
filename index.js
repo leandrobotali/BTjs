@@ -106,10 +106,7 @@ async function handleNewCandle(API, candle) {
 			// Si el motor decide operar en CUALQUIER segundo de la ventana (1 al 25)
 			if (decision.shouldOperate) {
 				const snap = decision.featureSnapshot || {}
-				const detalles = `CI=${(snap.CI || 0).toFixed(3)}, CET=${(snap.CET || 0).toFixed(3)}, PED=${(snap.PED || 0).toFixed(3)}`
-
-				// Evitar log masivo si ya está operando otra cosa
-				if (isOperating()) return
+				const detalles = `CI=${(snap.CI || 0).toFixed(3)}, ACEL=${(snap.CET || 0).toFixed(3)}, INERCIA=${(snap.PED || 0).toFixed(3)}, RANGE=${((snap.RANGE || 0) * 10000).toFixed(4)}`
 
 				console.log(`\n[ENGINE] ✅ SE OPERA [${decision.direction}] | Segundo: ${currentSecond}`)
 				console.log(`[ENGINE] 💬 Resolución: ${decision.humanReason}`)
@@ -166,7 +163,7 @@ async function handleNewCandle(API, candle) {
 				operationExecutedThisCandle = true
 
 				const snap = decision.featureSnapshot || {}
-				const detalles = `CI=${(snap.CI || 0).toFixed(3)}, CET=${(snap.CET || 0).toFixed(3)}, PED=${(snap.PED || 0).toFixed(3)}, VOL=${(snap.VOL || 0).toFixed(6)}`
+				const detalles = `CI=${(snap.CI || 0).toFixed(3)}, ACEL=${(snap.CET || 0).toFixed(3)}, INERCIA=${(snap.PED || 0).toFixed(3)}, RANGE=${((snap.RANGE || 0) * 10000).toFixed(4)}`
 
 				console.log(`\n[ENGINE] ❌ NO SE OPERÓ (Fin de ventana analítica | Segundo 25)`)
 				console.log(`[ENGINE] 💬 Resolución: ${decision.humanReason}`)

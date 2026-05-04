@@ -396,7 +396,8 @@ function computeFeatures(ticks) {
         IAL,   // [0, 1]     absorción local (+ = barrera presente)
         SR: srResult.value,    // [0, 1]    simetría rota
         SR_dir: srResult.direction,  // -1 o +1   dirección de la asimetría
-        VOL: mean(dp.map(Math.abs)) // Volatilidad media absoluta (intensidad real)
+        VOL: mean(dp.map(Math.abs)), // Volatilidad media absoluta (intensidad real)
+        RANGE: (Math.max(...ticks.map(t => t.p)) - Math.min(...ticks.map(t => t.p))) / (mean(ticks.map(t => t.p)) + ε) // Rango relativo de la ventana
     }
 }
 
