@@ -1,0 +1,131 @@
+instrument {
+    name = "Peter Trend 1.0",
+    short_name = "Peter Trend 1.0",
+    overlay = true,
+    icon = "indicators:MA"
+}
+
+input_group {
+    "Trend Filter",
+    ema_fast_period = input(10, "EMA rpida", input.integer, 1, 200),
+    ema_slow_period = input(30, "EMA lenta", input.integer, 1, 300),
+    slope_bars = input(1, "Pendiente EMA", input.integer, 1, 20)
+}
+
+input_group {
+    "Momentum Filter",
+    rsi_period = input(14, "RSI periodo", input.integer, 1, 100),
+    rsi_call_min = input(52, "RSI mnimo CALL", input.double, 1, 100, 1, false),
+    rsi_put_max = input(48, "RSI mximo PUT", input.double, 1, 100, 1, false)
+}
+
+input_group {
+    "Candle Filter",
+    min_body_ratio = input(0.30, "Cuerpo mnimo / rango", input.double, 0.1, 1.0, 0.05, false),
+    wick_factor = input(0.60, "Mecha de rechazo x cuerpo", input.double, 0.5, 5.0, 0.1, false)
+}
+
+input_group {
+    "Colors",
+    call_color = input { default = "#00FF66", type = input.color },
+    put_color  = input { default = "#FF3366", type = input.color },
+    ema_fast_color = input { default = "#00BFFF", type = input.color },
+    ema_slow_color = input { default = "#FFAA00", type = input.color }
+}
+
+ema_fast = ema(close, ema_fast_period)
+ema_slow = ema(close, ema_slow_period)
+rsi_val = rsi(close, rsi_period)
+
+plot(ema_fast, "EMA rpida", ema_fast_color, 1)
+plot(ema_slow, "EMA lenta", ema_slow_color, 1)
+
+-- ==============================
+-- Datos SOLO de vela cerrada [1]
+-- ==============================
+
+body_1 = abs(close[1] - open[1])
+range_1 = high[1] - low[1]
+
+upper_wick_1 = high[1] - max(open[1], close[1])
+lower_wick_1 = min(open[1], close[1]) - low[1]
+
+valid_range = range_1 > 0
+strong_body = valid_range and body_1 / range_1 >= min_body_ratio
+
+bull_candle = close[1] > open[1]
+bear_candle = close[1] < open[1]
+
+-- ==============================
+-- Filtro de tendencia
+-- ==============================
+
+trend_up =
+    ema_fast[1] > ema_slow[1] and
+    close[1] > ema_fast[1] and
+    ema_fast[1] > ema_fast[1 + slope_bars] and
+    ema_slow[1] > ema_slow[1 + slope_bars]
+
+trend_down =
+    ema_fast[1] < ema_slow[1] and
+    close[1] < ema_fast[1] and
+    ema_fast[1] < ema_fast[1 + slope_bars] and
+    ema_slow[1] < ema_slow[1 + slope_bars]
+
+-- ==============================
+-- Rechazo / pullback
+-- ==============================
+
+call_rejection =
+    bull_candle and
+    strong_body and
+    lower_wick_1 >= body_1 * wick_factor and
+    low[1] <= ema_fast[1] and
+    close[1] > ema_fast[1]
+
+put_rejection =
+    bear_candle and
+    strong_body and
+    upper_wick_1 >= body_1 * wick_factor and
+    high[1] >= ema_fast[1] and
+    close[1] < ema_fast[1]
+
+-- ==============================
+-- Seales finales NO REPAINT
+-- Entrada: prxima vela M1
+-- Expiracin sugerida: 1 minuto
+-- ==============================
+
+call_signal =
+    trend_up and
+    call_rejection and
+    rsi_val[1] >= rsi_call_min
+
+put_signal =
+    trend_down and
+    put_rejection and
+    rsi_val[1] <= rsi_put_max
+
+plot_shape(
+    call_signal,
+    "CALL",
+    shape_style.arrowup,
+    shape_size.large,
+    call_color,
+    shape_location.belowbar,
+    -1,
+    "CALL",
+    call_color
+)
+
+plot_shape(
+    put_signal,
+    "PUT",
+    shape_style.arrowdown,
+    shape_size.large,
+    put_color,
+    shape_location.abovebar,
+    -1,
+    "PUT",
+    put_color
+)
