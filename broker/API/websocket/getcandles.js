@@ -1,8 +1,13 @@
-module.exports = function(active, size, count, to) {
+module.exports = function (active, size, count, to) {
 	return new Promise((resolve, reject) => {
 		if (!(active in this.actives))
 			return reject("Ativo inválido.")
-// {"name":"sendMessage","request_id":"135","local_time":19853,"msg":{"name":"get-candles","version":"2.0","body":{"active_id":1861,"ssize":60,"from_id":748270,"to_id":748288,"split_normalization":true,"only_closed":true}}}
+
+		const timeout = setTimeout(() => {
+			this.WebSocket.emitter.removeListener("candles", callback)
+			reject(new Error("Timeout esperando velas (20s)"))
+		}, 20000)
+
 		const id = this.WebSocket.send("sendMessage", {
 			name: "get-candles",
 			version: "2.0",
@@ -12,12 +17,13 @@ module.exports = function(active, size, count, to) {
 				to,
 				count,
 				// split_normalization:true,
-				only_closed:true
+				only_closed: true
 			}
 		})
 
 		const callback = message => {
 			if (message.request_id == id) {
+				clearTimeout(timeout)
 				this.WebSocket.emitter.removeListener("candles", callback)
 				if (message.status != 2000) return reject(message.msg)
 				return resolve(message.msg.candles)

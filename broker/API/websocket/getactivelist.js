@@ -1,15 +1,21 @@
-module.exports = function(active) {
+module.exports = function (active) {
 	return new Promise((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			this.WebSocket.emitter.removeListener("initialization-data", callback);
+			reject(new Error("Timeout esperando initialization-data (20s)"));
+		}, 20000);
+
 		const id = this.WebSocket.send("sendMessage", {
 			name: "get-initialization-data",
 			version: "4.0",
 			body: {}
 		})
-			
+
 		// Callback que manejará la respuesta
 		const callback = (message) => {
 			// Comprobar si el request_id coincide con el que hemos enviado
 			if (message.request_id == id) {
+				clearTimeout(timeout);
 				// Remover el listener para evitar recibir respuestas múltiples para este request
 				this.WebSocket.emitter.removeListener("initialization-data", callback);
 				let resultado = Object.values(message.msg.turbo.actives).find(obj => obj.name === active);
