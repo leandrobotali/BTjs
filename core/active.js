@@ -47,6 +47,10 @@ async function loadActiveSchedule(API) {
 	}
 }
 
+function getActiveSchedule() {
+	return activeSchedule;
+}
+
 /**
  * Verifica si hay un rango activo que contenga "now".
  * - Si el último rango ya terminó, intenta recargar una sola vez.
@@ -87,6 +91,48 @@ async function isActiveOpen(API, timestamp = null) {
 }
 
 /**
+ * Retorna el próximo evento relevante (Apertura o Cierre)
+ */
+async function getNextMarketEvent(API) {
+	const now = Math.floor(Date.now() / 1000);
+
+	// Asegurar schedule cargado
+	if (!activeSchedule.length) {
+		try {
+			await loadActiveSchedule(API);
+		} catch (err) {
+			return null;
+		}
+	}
+
+	// 1. ¿Estamos en un intervalo ahora?
+	for (const { start, end } of activeSchedule) {
+		if (now >= start && now <= end) {
+			return { type: 'CLOSE', time: end, delay: end - now };
+		}
+	}
+
+	// 2. Si no, buscar el próximo que empiece después de ahora
+	const futureIntervals = activeSchedule.filter(it => it.start > now);
+	if (futureIntervals.length > 0) {
+		const next = futureIntervals[0];
+		return { type: 'OPEN', time: next.start, delay: next.start - now };
+	}
+
+	// 3. Si no hay futuros cargados, recargar y reintentar
+	try {
+		await loadActiveSchedule(API);
+		const freshIntervals = activeSchedule.filter(it => it.start > now);
+		if (freshIntervals.length > 0) {
+			const next = freshIntervals[0];
+			return { type: 'OPEN', time: next.start, delay: next.start - now };
+		}
+	} catch (err) { }
+
+	return null; // No hay información
+}
+
+/**
  * Chequeo previo a una operación.
  */
 async function checkActiveBeforeOperation(API) {
@@ -96,6 +142,8 @@ async function checkActiveBeforeOperation(API) {
 
 module.exports = {
 	loadActiveSchedule,
+	getActiveSchedule,
 	isActiveOpen,
+	getNextMarketEvent,
 	checkActiveBeforeOperation,
 };

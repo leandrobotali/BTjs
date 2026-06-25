@@ -60,6 +60,13 @@ function addNewCandle(candle) {
 			return false
 		}
 
+		// Validar que la vela previa tenga datos antes de agregarla
+		if (!lastStatusCandle || !lastStatusCandle.open || !lastStatusCandle.close) {
+			console.log(`[CANDLES] ⚠️ Omitiendo vela previa inválida (ID anterior: ${lastCandleId})`)
+			lastStatusCandle = candle // Inicializar con la actual para evitar que la próxima falle
+			return false
+		}
+
 		lastCandleId = candle.id
 
 		const newCandle = {

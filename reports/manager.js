@@ -47,19 +47,22 @@ function getSkippedFile() {
 
 // Variables para estadísticas en memoria
 let stats = {
-	total: { wins: 0, losses: 0 },
-	daily: { wins: 0, losses: 0 }
+	total: { wins: 0, losses: 0, ties: 0 },
+	daily: { wins: 0, losses: 0, ties: 0 }
 }
 
 async function addOperation(operation) {
 	// Actualizar estadísticas
-	const isWin = operation.result === 'WIN'
-	if (isWin) {
+	const result = operation.result
+	if (result === 'WIN') {
 		stats.total.wins++
 		stats.daily.wins++
-	} else {
+	} else if (result === 'LOSS') {
 		stats.total.losses++
 		stats.daily.losses++
+	} else if (result === 'TIE') {
+		stats.total.ties++
+		stats.daily.ties++
 	}
 
 	saveOperationToFile(operation).then(() => {
@@ -87,17 +90,17 @@ async function saveOperationToFile(operation) {
 }
 
 function printStats() {
-	const tOps = stats.total.wins + stats.total.losses
-	const tWr = tOps > 0 ? ((stats.total.wins / tOps) * 100).toFixed(2) : 0
+	const tOps = stats.total.wins + stats.total.losses + stats.total.ties
+	const tWr = (stats.total.wins + stats.total.losses) > 0 ? ((stats.total.wins / (stats.total.wins + stats.total.losses)) * 100).toFixed(2) : 0
 
-	const dOps = stats.daily.wins + stats.daily.losses
-	const dWr = dOps > 0 ? ((stats.daily.wins / dOps) * 100).toFixed(2) : 0
+	const dOps = stats.daily.wins + stats.daily.losses + stats.daily.ties
+	const dWr = (stats.daily.wins + stats.daily.losses) > 0 ? ((stats.daily.wins / (stats.daily.wins + stats.daily.losses)) * 100).toFixed(2) : 0
 
 	const moneyStats = obtenerEstadisticasFinancieras()
 
 	console.log(`\n================= ESTADÍSTICAS =================`)
-	console.log(`TOTAL : ${tOps} Ops | ${stats.total.wins} W / ${stats.total.losses} L | WR: ${tWr}%`)
-	console.log(`DIARIO: ${dOps} Ops | ${stats.daily.wins} W / ${stats.daily.losses} L | WR: ${dWr}%`)
+	console.log(`TOTAL : ${tOps} Ops | ${stats.total.wins} W / ${stats.total.losses} L / ${stats.total.ties} T | WR: ${tWr}%`)
+	console.log(`DIARIO: ${dOps} Ops | ${stats.daily.wins} W / ${stats.daily.losses} L / ${stats.daily.ties} T | WR: ${dWr}%`)
 	console.log(`-------------------------------------------------`)
 	console.log(`PÉRDIDAS A RECUPERAR: $${moneyStats.perdidas}`)
 	console.log(`MÁX PÉRDIDAS ACUMULADAS: $${moneyStats.maxPerdidasAcumuladas}`)
@@ -108,6 +111,7 @@ function printStats() {
 function resetDailyStats() {
 	stats.daily.wins = 0
 	stats.daily.losses = 0
+	stats.daily.ties = 0
 	console.log('[REPORTS] Estadísticas diarias reiniciadas.')
 }
 
@@ -166,6 +170,46 @@ function getStats() {
 	return stats
 }
 
+async function reloadStatsFromFiles() {
+	try {
+		const dir = path.join(__dirname, config.rep_directory)
+		const files = await fs.readdir(dir)
+
+		// Reset stats before reloading
+		stats.total = { wins: 0, losses: 0, ties: 0 }
+		stats.daily = { wins: 0, losses: 0, ties: 0 }
+
+		const opFiles = files.filter(f => f.startsWith(`operations_${config.version}_`) && f.endsWith('.json'))
+
+		for (const file of opFiles) {
+			const content = await fs.readFile(path.join(dir, file), 'utf8')
+			const lines = content.trim().split('\n')
+
+			for (const line of lines) {
+				try {
+					const op = JSON.parse(line)
+					const result = op.result
+
+					// Actualizar Total
+					if (result === 'WIN') stats.total.wins++
+					else if (result === 'LOSS') stats.total.losses++
+					else if (result === 'TIE') stats.total.ties++
+
+					// Si es el archivo de hoy, actualizar Diario
+					if (file.includes(date)) {
+						if (result === 'WIN') stats.daily.wins++
+						else if (result === 'LOSS') stats.daily.losses++
+						else if (result === 'TIE') stats.daily.ties++
+					}
+				} catch (e) { }
+			}
+		}
+		console.log(`[REPORTS] Estadísticas reconstruidas: Total ${stats.total.wins}W/${stats.total.losses}L | Diario ${stats.daily.wins}W/${stats.daily.losses}L`)
+	} catch (err) {
+		console.error('[REPORTS] Error al reconstruir estadísticas:', err.message)
+	}
+}
+
 module.exports = {
 	addOperation,
 	addSkipped,
@@ -177,5 +221,6 @@ module.exports = {
 	setSesion,
 	getStats,
 	resetDailyStats,
-	printStats
+	printStats,
+	reloadStatsFromFiles
 }

@@ -9,9 +9,10 @@ function calculateEMA(candles, period) {
 	const k = 2 / (period + 1)
 	let ema = candles.slice(0, period).reduce((s, c) => s + c.close, 0) / period
 	for (let i = period; i < candles.length; i++) {
+		if (typeof candles[i].close !== 'number' || isNaN(candles[i].close)) continue
 		ema = candles[i].close * k + ema * (1 - k)
 	}
-	return ema
+	return isNaN(ema) ? null : ema
 }
 
 /**

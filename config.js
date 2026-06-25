@@ -1,10 +1,27 @@
 require('dotenv').config();
 
 module.exports = {
-	version: "V4",
+	version: "V5",
 	rep_directory: process.env.REP_DIRECTORY,
 	// Configuración de Estrategia LMTA
 	strategy: {
+		// --- PETER TREND 1.0 (Pine Script) ---
+		peterTrend: {
+			ema_fast: 10,
+			ema_slow: 30,
+			slope_bars: 1,
+			rsi_period: 14,
+			rsi_call_min: 52,
+			rsi_put_max: 48,
+			min_body_ratio: 0.30,
+			wick_factor: 0.60
+		},
+		// --- PERFECT TREND (Aceleración y Estructura) ---
+		perfectTrend: {
+			minEmaGap: 0.000010,    // Separación mínima entre EMAs
+			minSlope: 0.000005,      // Pendiente mínima por vela para EMAs
+			minCandlesAtDirection: 5 // Mínimo de velas consecutivas a favor de tendencia
+		},
 		minTicks: 55, // Mínimo de ticks para analizar
 		minConfidence: 65, // Confianza mínima para ejecutar operación
 		whiplashWindow: 15, // Últimos N ticks para detectar latigazo

@@ -1,4 +1,5 @@
 const config = require('../config.js')
+console.log('[DEBUG] Módulo Trade V5.1 Cargado')
 const SimpleMutex = require('../core/mutex.js')
 const { checkActiveBeforeOperation } = require('../core/active.js')
 const { addOperation } = require('../reports/manager.js')
@@ -26,9 +27,9 @@ async function executeOperation(API, decision) {
 
 		const amount = calcularInversion()
 
-		console.log(`\n[OPERATION] Ejecutando ${decision.direction} en ${config.activePrincipal}`)
-		console.log(`[OPERATION] Monto: ${amount}`)
-		console.log(`[OPERATION] Duración: ${config.duracion_op} min`)
+		console.log(`\n[OPERACIÓN] Ejecutando ${decision.direction} en ${config.activePrincipal}`)
+		console.log(`[OPERACIÓN] Monto: ${amount}`)
+		console.log(`[OPERACIÓN] Duración: ${config.duracion_op} min`)
 
 		const order = await API.trade({
 			active: config.activePrincipal,
@@ -38,10 +39,10 @@ async function executeOperation(API, decision) {
 			duration: config.duracion_op
 		})
 
-		console.log('[OPERATION] Orden abierta, esperando cierre...')
+		console.log('[OPERACIÓN] Orden abierta, esperando cierre...')
 
 		const closeInfo = await order.close()
-		console.log('[OPERATION] Orden cerrada', JSON.stringify(closeInfo))
+		console.log('[OPERACIÓN] Orden cerrada', JSON.stringify(closeInfo))
 
 		let isWin = false;
 		let isTie = false;
@@ -80,13 +81,13 @@ async function executeOperation(API, decision) {
 		// Registrar el resultado en la gestión de capital dinámica
 		registrarResultado(amount, order.quote)
 
-		const profit = realProfit;
+		const finalProfit = realProfit;
 
-		console.log(`[OPERATION] Resultado: ${result} | Ganancia: $${realProfit.toFixed(2)}`)
+		console.log(`[OPERACIÓN] Resultado: ${result} | Ganancia: $${finalProfit.toFixed(2)}`)
 
 		const operation = {
-			result,
-			profit,
+			result: result,
+			profit: finalProfit,
 			direction: decision.direction,
 			amount: amount,
 			timestamp: new Date(),
@@ -94,7 +95,7 @@ async function executeOperation(API, decision) {
 			confidence: decision.confidence,
 			analysis: decision.analysis,
 			ticks: decision.ticks,
-			candles: decision.candles, // Últimas 20 velas para contexto
+			candles: decision.candles,
 			indicators: decision.indicators
 		}
 

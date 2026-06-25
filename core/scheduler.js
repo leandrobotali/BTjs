@@ -1,46 +1,34 @@
 /**
- * scheduler.js - Gestión de tareas programadas (crons)
- * 
- * Mejoras 1-2:
- * - Cron 1: Todos los días a las 22:00 (Argentina) → actualiza date al día siguiente y sesion a "S1"
- * - Cron 2: Todos los días a las 09:00 (Argentina) → actualiza sesion a "S2"
- * 
- * Mejora 3:
- * - Cron 3: Viernes a las 16:00 (Argentina) → desconecta bot y limpia estado
- * - Cron 4: Lunes a las 00:00 (Argentina) → reconecta bot y reinicia
+ * scheduler.js - Gestión de tareas programadas (crons) y monitoreo de mercado
  */
 
 const cron = require('node-cron')
 const fs = require('fs')
 const path = require('path')
 const { setDate, setSesion } = require('../reports/manager.js')
+const { isActiveOpen, getNextMarketEvent } = require('./active.js')
 
 const WATCHDOG_LOG_FILE = path.join(__dirname, '../watchdog.log')
 
 // Variable global para almacenar referencia al API y función de inicialización
 let globalAPI = null
-let globalConnectFunction = null  // solo la parte de conexión al mercado (sin scheduler)
+let globalConnectFunction = null
 let isConnected = false
-let schedulerInitialized = false  // guard: los crons se registran UNA SOLA VEZ
+let isConnecting = false
+let schedulerInitialized = false
+let marketMonitorActive = false
 
 // ── WATCHDOG ──────────────────────────────────────────────────────────────────
 const WATCHDOG_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutos
 let watchdogTimer = null
 
-/**
- * Resetea (o inicia) el watchdog de velas.
- * SOLO activo cuando el bot está conectado (isConnected=true).
- * Si no se llama en WATCHDOG_TIMEOUT_MS ms, fuerza una reconexión completa.
- */
 function resetWatchdog() {
-	// Si el bot no está conectado (mercado cerrado, viernes, etc.) no activar el timer
 	if (!isConnected) return
 
 	if (watchdogTimer) clearTimeout(watchdogTimer)
 	watchdogTimer = setTimeout(async () => {
-		// Registrar en archivo de persistencia
-		const nowArg = new Date(Date.now() - 3 * 3600 * 1000)
-		const timestamp = nowArg.toISOString().replace('T', ' ').substring(0, 19) + ' (ART)'
+		const nowArg = new Date()
+		const timestamp = nowArg.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
 		const logLine = `[WATCHDOG] Se ejecutó watchdog el ${timestamp} - bot sin velas por ${WATCHDOG_TIMEOUT_MS / 60000} min\n`
 		fs.appendFile(WATCHDOG_LOG_FILE, logLine, (err) => {
 			if (err) console.error('[WATCHDOG] ❌ Error escribiendo log:', err.message)
@@ -48,7 +36,6 @@ function resetWatchdog() {
 
 		console.log(`[WATCHDOG] ⚠️ No se recibieron velas en ${WATCHDOG_TIMEOUT_MS / 60000} minutos.`)
 		console.log('[WATCHDOG] 🔄 Forzando reconexión completa...')
-		console.log(`[WATCHDOG] 📝 Evento registrado en watchdog.log`)
 		isConnected = false
 		try {
 			await reconnectBot()
@@ -58,7 +45,6 @@ function resetWatchdog() {
 	}, WATCHDOG_TIMEOUT_MS)
 }
 
-/** Cancela el watchdog (usado al desconectar intencionalmente) */
 function cancelWatchdog() {
 	if (watchdogTimer) {
 		clearTimeout(watchdogTimer)
@@ -66,9 +52,8 @@ function cancelWatchdog() {
 		console.log('[WATCHDOG] ⏹️ Timer cancelado (mercado cerrado)')
 	}
 }
-// ──────────────────────────────────────────────────────────────────────────────
 
-// Función para actualizar las variables en manager.js
+// ── MANAGER DATE/SESSION ──────────────────────────────────────────────────────
 function updateManagerDate() {
 	try {
 		setDate()
@@ -85,206 +70,173 @@ function updateManagerSesion(newSesion) {
 		console.error('[SCHEDULER] ❌ Error actualizando manager.js:', err.message)
 	}
 }
-// function updateManagerVariables(newDate, newSesion) {
-// 	const fs = require('fs')
-// 	const path = require('path')
-// 	const managerPath = path.join(__dirname, '../reports/manager.js')
 
-// 	try {
-// 		let content = fs.readFileSync(managerPath, 'utf8')
+// ── MARKET STATUS & CONNECTIONS ─────────────────────────────────────────────
 
-// 		// Actualizar date si se proporciona
-// 		if (newDate) {
-// 			content = content.replace(/let date = '\d{8}'/, `let date = '${newDate}'`)
-// 			console.log(`[SCHEDULER] ✓ Variable 'date' actualizada a: ${newDate}`)
-// 		}
-
-// 		// Actualizar sesion si se proporciona
-// 		if (newSesion) {
-// 			content = content.replace(/let sesion = 'S\d+'/, `let sesion = '${newSesion}'`)
-// 			console.log(`[SCHEDULER] ✓ Variable 'sesion' actualizada a: ${newSesion}`)
-// 		}
-
-// 		fs.writeFileSync(managerPath, content, 'utf8')
-// 	} catch (err) {
-// 		console.error('[SCHEDULER] ❌ Error actualizando manager.js:', err.message)
-// 	}
-// }
-
-// Función para desconectar el bot (Viernes 16:00)
 async function disconnectBot() {
-	if (!isConnected) {
-		console.log('[SCHEDULER] Bot ya está desconectado')
-		return
-	}
+	if (!isConnected) return
 
-	// Detener watchdog al desconectar intencionalmente
 	cancelWatchdog()
-
 	try {
-		console.log('[SCHEDULER] 🔴 Iniciando desconexión...')
+		console.log('\n[SCHEDULER] 🔴 Mercado cerrado según intervalos. Desconectando...')
 
-		// 1. Desuscribirse de velas
 		if (globalAPI && globalAPI.unsubscribeFromCandles) {
 			const config = require('../config.js')
 			await globalAPI.unsubscribeFromCandles(config.activePrincipal)
-			console.log('[SCHEDULER] ✓ Desuscrito de generación de velas')
+			console.log('[SCHEDULER] ✓ Desuscrito de velas')
 		}
 
-		// 2. Limpiar buffer de velas
 		const { clearCandles, clearTicks } = require('./candles.js')
 		clearCandles()
 		clearTicks()
-		console.log('[SCHEDULER] ✓ Buffer de velas limpiado')
 
-		// 2.5. Limpiar Zonas Z
-		const { clearZonesZ } = require('../indicators/zone-z.js')
-		clearZonesZ()
-		console.log('[SCHEDULER] ✓ Zonas Z limpiadas')
-
-		// 2.6. Limpiar global state (resultados reales para gestión dinámica)
 		if (typeof global !== 'undefined' && global._botRealResults) {
 			global._botRealResults = []
-			console.log('[SCHEDULER] ✓ Global state limpiado')
 		}
 
-		// 3. Limpiar operaciones en memoria
 		const { clearOperationsBuffer } = require('../reports/manager.js')
 		clearOperationsBuffer()
-		console.log('[SCHEDULER] ✓ Operaciones en memoria limpiadas')
 
-		// 4. Cerrar conexión WebSocket
 		if (globalAPI && globalAPI.disconnect) {
 			await globalAPI.disconnect()
 			console.log('[SCHEDULER] ✓ WebSocket desconectado')
 		}
 
 		isConnected = false
-		console.log('[SCHEDULER] 🔴 Bot desconectado exitosamente - Modo dormido hasta el lunes')
+		console.log('[SCHEDULER] 🔴 Bot en modo espera (Dormido)')
 	} catch (err) {
 		console.error('[SCHEDULER] ❌ Error en desconexión:', err.message)
 	}
 }
 
-// Función para reconectar el bot (Lunes 00:00 o watchdog)
+let reconnectFailCount = 0
 async function reconnectBot() {
-	if (isConnected) {
-		console.log('[SCHEDULER] Bot ya está conectado - Ignorando reconexión')
+	if (isConnected || isConnecting) return
+
+	const isOpen = await isMarketOpen()
+	if (!isOpen) {
+		reconnectFailCount = 0
 		return
 	}
 
-	// Verificar que el mercado esté abierto
-	if (!isMarketOpen()) {
-		console.log('[SCHEDULER] Mercado aún cerrado - Esperando...')
-		return
+	// Si hubo fallos previos, esperar un tiempo proporcional
+	if (reconnectFailCount > 0) {
+		const waitTime = Math.min(60000, reconnectFailCount * 10000) // 10s, 20s... hasta 60s
+		console.log(`[SCHEDULER] ⏳ Reintento de conexión en ${waitTime / 1000}s (Fallo #${reconnectFailCount})`)
+		await new Promise(resolve => setTimeout(resolve, waitTime))
 	}
 
 	try {
-		console.log('[SCHEDULER] 🟢 Iniciando reconexión...')
+		isConnecting = true
 
-		// Usar la función de conexión al mercado (SIN reiniciar el scheduler)
+		if (reconnectFailCount >= 5) {
+			console.log('\n[SCHEDULER] 🚨 Fallos persistentes detectados (5+). Forzando reinicio fatal para limpieza de sesión...')
+			process.exit(1) // PM2 reiniciará el bot desde cero
+		}
+
+		console.log('\n[SCHEDULER] 🟢 Mercado abierto según intervalos. Conectando...')
 		if (globalConnectFunction && globalAPI) {
 			await globalConnectFunction(globalAPI)
 			isConnected = true
-			console.log('[SCHEDULER] 🟢 Bot reconectado exitosamente')
-		} else {
-			console.error('[SCHEDULER] ❌ No se puede reconectar: función de conexión no disponible')
+			reconnectFailCount = 0
+			console.log('[SCHEDULER] 🟢 Bot conectado y operativo')
 		}
 	} catch (err) {
+		reconnectFailCount++
 		console.error('[SCHEDULER] ❌ Error en reconexión:', err.message)
+	} finally {
+		isConnecting = false
 	}
 }
 
-// Verificar si estamos en horario de mercado (Lunes 00:00 - Viernes 16:00)
-function isMarketOpen() {
-	const now = new Date()
-	const day = now.getDay() // 0=Domingo, 1=Lunes, ..., 5=Viernes, 6=Sábado
-	const hour = now.getHours()
-
-	// Sábado o Domingo → Mercado cerrado
-	if (day === 0 || day === 6) return false
-
-	// Viernes después de las 16:00 → Mercado cerrado
-	if (day === 5 && hour >= 16) return false
-
-	// Resto de días → Mercado abierto
-	return true
+async function isMarketOpen() {
+	if (!globalAPI) return false
+	return await isActiveOpen(globalAPI)
 }
 
-// Inicializar crons (se ejecuta UNA SOLA VEZ al arrancar el proceso)
-function initScheduler(API, connectFunction) {
-	console.log('[SCHEDULER] Inicializando tareas programadas...')
+// ── DYNAMIC MONITOR ─────────────────────────────────────────────────────────
 
-	// Guardar referencias globales para reconexión
+async function startMarketMonitor() {
+	if (marketMonitorActive) return
+	marketMonitorActive = true
+
+	console.log('[SCHEDULER] Iniciando monitor dinámico de intervalos...')
+
+	const runCheck = async () => {
+		try {
+			const event = await getNextMarketEvent(globalAPI)
+			if (!event) {
+				console.log('[SCHEDULER] ⚠️ No se pudo obtener información del próximo evento.')
+				setTimeout(runCheck, 60000) // Reintentar en 1 min
+				return
+			}
+
+			const isOpen = await isMarketOpen()
+
+			if (isOpen && !isConnected) {
+				reconnectBot().catch(err => console.error('[SCHEDULER] Error en monitor (reconnect):', err.message))
+			} else if (!isOpen && isConnected) {
+				disconnectBot().catch(err => console.error('[SCHEDULER] Error en monitor (disconnect):', err.message))
+			}
+
+			// Informar estado actual
+			if (isOpen) {
+				const minLeft = Math.floor(event.delay / 60)
+				console.log(`[SCHEDULER] Monitor: Mercado ABIERTO. Cierre en ${minLeft} min (aprox).`)
+			} else {
+				const minLeft = Math.floor(event.delay / 60)
+				console.log(`[SCHEDULER] Monitor: Mercado CERRADO. Próxima apertura en ${minLeft} min.`)
+			}
+
+			// El delay máximo para el próximo check es de 1 minuto,
+			// pero si ocurre un evento antes (apertura/cierre), despertamos justo ahí (-2 segundos para seguridad)
+			const nextCheckDelay = Math.max(5000, Math.min(60000, (event.delay * 1000) - 2000))
+			setTimeout(runCheck, nextCheckDelay)
+
+		} catch (err) {
+			console.error('[SCHEDULER] ❌ Error en monitor de mercado:', err.message)
+			setTimeout(runCheck, 30000)
+		}
+	}
+
+	runCheck()
+}
+
+// ── INITIALIZATION ────────────────────────────────────────────────────────────
+
+async function initScheduler(API, connectFunction) {
+	console.log('[SCHEDULER] Configurando scheduler dinámico...')
+
 	globalAPI = API
-	globalConnectFunction = connectFunction  // solo la parte de conexión, sin reiniciar scheduler
+	globalConnectFunction = connectFunction
 
-	// Verificar si el mercado está abierto al iniciar
-	if (!isMarketOpen()) {
-		console.log('[SCHEDULER] ⚠️ Mercado CERRADO - Bot en modo dormido')
-		console.log('[SCHEDULER] Esperando reconexión automática el lunes 00:00...')
-		isConnected = false
-		// No ejecutar initialize, solo configurar crons
-	} else {
-		console.log('[SCHEDULER] ✓ Mercado ABIERTO - Bot operativo')
-		isConnected = true
+	// Crons fijos para date/sesion (Independientes del mercado)
+	if (!schedulerInitialized) {
+		// CRON 1: 22:00
+		cron.schedule('0 22 * * *', () => {
+			console.log(`[SCHEDULER] 🕒 22:00 - Actualizando fecha y sesión...`)
+			updateManagerDate()
+			updateManagerSesion('S1')
+		}, { timezone: "America/Argentina/Buenos_Aires" })
+
+		// CRON 2: 09:00
+		cron.schedule('0 9 * * *', () => {
+			console.log(`[SCHEDULER] 🕒 09:00 - Cambiando a sesión S2...`)
+			updateManagerSesion('S2')
+		}, { timezone: "America/Argentina/Buenos_Aires" })
+
+		schedulerInitialized = true
 	}
 
-	// GUARD: los crons se registran una sola vez por proceso
-	if (schedulerInitialized) {
-		console.log('[SCHEDULER] ⚠️ Crons ya registrados - omitiendo re-registro (evita duplicados)')
-		return isConnected
-	}
-	schedulerInitialized = true
+	// Verificar estado inicial
+	const isOpenAtStart = await isMarketOpen()
+	isConnected = isOpenAtStart
 
-	// CRON 1: Todos los días a las 22:00 (horario Argentina)
-	// Actualiza date al día siguiente y sesion a "S1"
-	cron.schedule('0 22 * * *', () => {
-		console.log(`[SCHEDULER] 🕒 22:00 - Actualizando fecha y sesión...`)
-		updateManagerDate()
-		updateManagerSesion('S1')
-	}, {
-		timezone: "America/Argentina/Buenos_Aires"
-	})
+	// Iniciar monitor dinámico de fondo
+	startMarketMonitor()
 
-	console.log('[SCHEDULER] ✓ Cron 1 configurado: 22:00 diario (actualiza date y sesion=S1)')
-
-	// CRON 2: Todos los días a las 09:00 (horario Argentina)
-	// Actualiza sesion a "S2"
-	cron.schedule('0 9 * * *', () => {
-		console.log(`[SCHEDULER] 🕒 09:00 - Cambiando a sesión S2...`)
-		updateManagerSesion('S2')
-	}, {
-		timezone: "America/Argentina/Buenos_Aires"
-	})
-
-	console.log('[SCHEDULER] ✓ Cron 2 configurado: 09:00 diario (actualiza sesion=S2)')
-
-	// MEJORA 3: CRON 3 - Viernes 16:00 (Desconexión)
-	cron.schedule('0 16 * * 5', async () => {
-		console.log(`[SCHEDULER] 🔴 Viernes 16:00 - Desconectando bot...`)
-		await disconnectBot()
-	}, {
-		timezone: "America/Argentina/Buenos_Aires"
-	})
-
-	console.log('[SCHEDULER] ✓ Cron 3 configurado: Viernes 16:00 (desconexión)')
-
-	// MEJORA 3: CRON 4 - Lunes 00:00 (Reconexión)
-	cron.schedule('0 0 * * 1', async () => {
-		console.log(`[SCHEDULER] 🟢 Lunes 00:00 - Reconectando bot...`)
-		await reconnectBot()
-	}, {
-		timezone: "America/Argentina/Buenos_Aires"
-	})
-
-	console.log('[SCHEDULER] ✓ Cron 4 configurado: Lunes 00:00 (reconexión)')
-	console.log('[SCHEDULER] ✅ Scheduler inicializado correctamente')
-
-	// Retornar estado inicial para que index.js sepa si debe continuar
 	return isConnected
 }
-// ──────────────────────────────────────────────────────────────────────────────
 
 module.exports = {
 	initScheduler,
